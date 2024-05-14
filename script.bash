@@ -30,10 +30,31 @@ fi
 if [ "$1" == "--update" ]; then
 	wget https://raw.githubusercontent.com/samirhvbr/Linux-Start/master/script.bash?token=GHSAT0AAAAAACRWOHOGJY5L54MQEJW7YC76ZSD3MVQ -O /root/script.sh
 	chmod +x /root/script.sh
-	echo "Script Atualizado!"
+	echo "Script Atualizado! \\n$VERSION"
 	exit
 fi
 
+
+
+#
+# UPGRADE DEBIAN OS
+#
+if [ "$1" == "--upgrade" ]; then
+	# Verificando se é Debian
+	if [ ! -f /etc/debian_version ]; then
+		echo "Este script é para Debian!"
+		exit
+	fi
+	#apt update --allow-unauthenticated --allow-insecure-repositories
+	apt update
+	apt -y -o Dpkg::Options::="--force-confold" upgrade
+	apt -y -o Dpkg::Options::="--force-confold" dist-upgrade
+	apt autoremove -y
+	apt autoclean -y
+
+	echo "Sistema Atualizado!"
+	exit
+fi
 
 
 
