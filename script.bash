@@ -13,6 +13,26 @@
 #
 VERSAO=22.2
 
+
+
+# PUTA QUE PARIU
+
+
+#
+# UPDATE
+#
+if [ "$1" == "--update" ]; then
+	wget https://raw.githubusercontent.com/samirhvbr/Linux-Start/master/script.bash?token=GHSAT0AAAAAACRWOHOGJY5L54MQEJW7YC76ZSD3MVQ -O /root/script.sh
+	chmod +x /root/script.sh
+	echo "Script Atualizado!"
+	exit
+fi
+
+
+
+
+
+
 #
 # VARIAVEIS
 #
@@ -22,6 +42,7 @@ BLU="\e[34m"
 WHI="\e[97m"
 GREEN="\e[32m"
 ENDCOLOR="\e[0m"
+
 
 
 #
