@@ -7,11 +7,11 @@
 #  * Criado: 20/01/2023
 #  * 
 #  * Ult. Atualizacao: 
-#  * Versaoo: 22.0
+#  * Data: 14/05/2024
 #
 #
 #
-VERSAO=22.0
+VERSAO=22.2
 
 #
 # VARIAVEIS
@@ -27,8 +27,8 @@ ENDCOLOR="\e[0m"
 #
 # CRIANDO PASTA DOS BACKUPS E LOG
 #
-DATE=`date +%Y%m%d`
-DATE2=`date +%Y%m%d%s`
+DATE=$(date +%Y%m%d)
+DATE2=$(date +%Y%m%d%s)
 LOG='/root/shv_script_${DATE2}.log'
 DIR=/root/$DATE2
 #if [ -d "/root/${DATE2}/" ]; then
@@ -53,12 +53,12 @@ config_server (){
 	echo "VAMOS EFETUAR A CONFIGURACAO INICIAL DO SERVIDOR"
 	echo ;echo ;echo 
 	
-	hostname=`hostname -s` >> $LOG 2>&1
-	domain=`hostname -d` >> $LOG 2>&1
-	fqdn=`hostname -f` >> $LOG 2>&1
+	hostname=$(hostname -s) >> $LOG 2>&1
+	domain=$(hostname -d) >> $LOG 2>&1
+	fqdn=$(hostname -f) >> $LOG 2>&1
 	iplocal=`hostname -i` >> $LOG 2>&1
-	ipv4=`ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p` >> $LOG 2>&1
-	ipv6=`ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p` >> $LOG 2>&1
+	ipv4=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p) >> $LOG 2>&1
+	ipv6=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p) >> $LOG 2>&1
 
 	
 	read -p "Qual o hostname do servidor? (${hostname})? " choice
