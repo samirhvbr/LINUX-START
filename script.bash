@@ -14,8 +14,14 @@
 VERSAO=22.2
 
 
+#
+# RETORNO DE VERSAO
+#
+if [ "$1" == "--version" ]; then
+	echo "${VERSION}"
+	exit
+fi
 
-# PUTA QUE PARIU
 
 
 #
