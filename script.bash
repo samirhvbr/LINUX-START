@@ -19,7 +19,6 @@ VERSAO=221
 Hostname=$(hostname -s)
 Domain=$(hostname -d)
 Fqdn=$(hostname -f)
-Iplocal=`hostname -i`
 Ipv4=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p)
 Ipv6=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p)
 
