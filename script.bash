@@ -65,7 +65,7 @@ res_os=$result_array[2]
 #
 # VERIFICANDO VERSAO DO SCRIPT
 #
-if [ "$res_script_version" != "$VERSAO" && ! -f /root/scgit ]]; then ]; then
+if [ "$res_script_version" != "$VERSAO" ] && [ ! -f /root/scgit ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
@@ -84,12 +84,10 @@ if [ "$res_script_version" != "$VERSAO" && ! -f /root/scgit ]]; then ]; then
 		echo "Erro ao conectar com o banco de dados! (2)"
 		exit 1
 	fi
-	source /root/scgit.sh
 	if [ $? -ne 0 ]; then
 		echo "Script externo falhou. Saindo do script principal."
 		exit 1
 	fi
-	exit 0
 fi
 
 
