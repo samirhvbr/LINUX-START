@@ -21,6 +21,15 @@ Domain=$(hostname -d)
 Fqdn=$(hostname -f)
 Ipv4=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p)
 Ipv6=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p)
+IP=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p | cut -d "/" -f 1)
+if [ ! command -v lsb_release &> /dev/null ]; then
+    apt install -y lsb-release
+fi
+distroName=$(lsb_release -i | awk '{print $3}')
+distroCodeName=$(lsb_release -c | awk '{print $2}')
+kernelRelease=$(uname -r)
+
+
 
 #
 # CONEXAO COM O BANCO DE DADOS
@@ -29,16 +38,26 @@ DBhost=100.64.66.211
 DBuser=b3server
 DBpass=Blue3DBx2623y
 DBdatabase=server
-SQL_QUERY="SELECT script_version FROM vm WHERE hostname = '$Hostname' AND ativo = '1' LIMIT 1"
-result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY")
+SQL_QUERY="SELECT script_version,upgrade,os FROM vm WHERE ipv4_local = '$IP' AND hostname = '$Hostname' AND ativo = '1' LIMIT 1"
+results=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -sN -e "$SQL_QUERY")
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados!"
 	exit 1
 fi
+count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  eval "result$count=\"$line\""
+done <<< "$results"
+
+res_script_version=$result1
+res_upgrade=$result2
+res_os=$result3
+
 #
 # VERIFICANDO VERSAO DO SCRIPT
 #
-if [ "$result" != "$VERSAO" ]; then
+if [ "$res_script_version" != "$VERSAO" ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
@@ -77,7 +96,7 @@ swap_usage=$(free -m | awk 'NR==3{print $3}')
 
 cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')
 cpu_load=$(top -bn1 | grep "load average:" | awk '{print $12 $13 $14}')
-cpu_jumps=$(top -bn1 | grep "load average:" | awk '{print $12 $13 $14}' | awk -F, '{print $1}')
+#cpu_jumps=$(top -bn1 | grep "load average:" | awk '{print $12 $13 $14}' | awk -F, '{print $1}')
 
 # VERIFICANDO ESPAÇO EM DISCO UTILIZADO
 root_disk_usage=$(df -h | awk '/\/$/ {print $5}' |tr -d '%')
@@ -103,7 +122,7 @@ logs=$(journalctl -p 1..3 -n 10 --no-pager | tail -n +2)
 
 
 # INSERINDO NO BANCO DE DADOS
-SQL_QUERY_b="INSERT INTO vm_status (hostname,ipv4_local,total_memory,free_memory,cache_memory,swap_total,swap_usage,cpu_usage,cpu_load,cpu_jumps,root_disk_usage,var_disk_usage,log_disk_usage,srv_disk_usage,eth0_vel,eth1_vel) VALUES ('$Hostname','$Ipv4','$total_memory','$free_memory','$cache_memory','$swap_total','$swap_usage','$cpu_usage','$cpu_load','$cpu_jumps','$root_disk_usage','$var_disk_usage','$log_disk_usage','$srv_disk_usage','$rede_um','$rede_dois')"
+SQL_QUERY_b="INSERT INTO vm_status (hostname,ipv4_local,total_memory,free_memory,cache_memory,swap_total,swap_usage,cpu_usage,cpu_load,root_disk_usage,var_disk_usage,log_disk_usage,srv_disk_usage,eth0_vel,eth1_vel) VALUES ('$Hostname','$Ipv4','$total_memory','$free_memory','$cache_memory','$swap_total','$swap_usage','$cpu_usage','$cpu_load','$root_disk_usage','$var_disk_usage','$log_disk_usage','$srv_disk_usage','$rede_um','$rede_dois')"
 result_b=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY_b")
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados! (3)"
@@ -129,10 +148,20 @@ fi
 #
 # VERIFICANDO SE PRECISA ATUALIZAR O OS
 #
-if [ "${result[1]}" == "1" ]; then
-	echo "Precisa atualizar o script"
-else
-	echo "Não precisa atualizar o script"
+##SQL_QUERY="SELECT upgrade FROM vm WHERE hostname = '$Hostname' AND ativo = '1' LIMIT 1"
+##result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -sN -e "$SQL_QUERY")
+##if [ $? -ne 0 ]; then
+##	echo "Erro ao conectar com o banco de dados!"
+##	exit 1
+if [ "$res_upgrade" == "1" ]; then
+	#apt update --allow-unauthenticated --allow-insecure-repositories
+	apt update
+	apt -y -o Dpkg::Options::="--force-confold" upgrade
+	apt -y -o Dpkg::Options::="--force-confold" dist-upgrade
+	apt autoremove -y
+	apt autoclean -y
+
+	echo "Sistema Atualizado!"
 fi
 
 
