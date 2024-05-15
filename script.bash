@@ -61,8 +61,12 @@ if [ "${result}" != "$VERSAO" ]; then
 		echo "Erro ao conectar com o banco de dados! (2)"
 		exit 1
 	fi
-	/root/scgit.sh
-	exit 1
+	source /root/scgit.sh
+	if [ $? -ne 0 ]; then
+		echo "Script externo falhou. Saindo do script principal."
+		exit 1
+	fi
+	exit 0
 fi
 
 
