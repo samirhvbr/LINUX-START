@@ -33,7 +33,7 @@ DBdatabase=server
 #
 # CONECTANDO COM O BANCO DE DADOS MYSQL
 #
-SQL_QUERY="SELECT script_version,upgrade FROM vm WHERE hostnames = '$Hostname' AND ativo = '1' LIMIT 1"
+SQL_QUERY="SELECT script_version FROM vm WHERE hostnames = '$Hostname' AND ativo = '1' LIMIT 1"
 result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados!"
@@ -42,7 +42,7 @@ fi
 #
 # VERIFICANDO VERSAO DO SCRIPT
 #
-if [ "${result[0]}" != "$VERSAO" ]; then
+if [ "${result}" != "$VERSAO" ]; then
 	echo "Versão do script é diferente da versão do banco de dados"
 	#
 	# UPDATE DO SCRIPT
