@@ -22,7 +22,7 @@ Fqdn=$(hostname -f)
 Ipv4=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p)
 Ipv6=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p)
 IP=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p | cut -d "/" -f 1)
-if [ ! command -v lsb_release &> /dev/null ]; then
+if ! command -v lsb_release &> /dev/null; then
     apt install -y lsb-release
 fi
 distroName=$(lsb_release -i | awk '{print $3}')
@@ -44,20 +44,28 @@ if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados!"
 	exit 1
 fi
-count=0
+
+##count=0
+##while IFS= read -r line; do
+##  count=$((count + 1))
+##  eval "result$count=\"$line\""
+##done <<< "$results"
+
+
+result_array=()
 while IFS= read -r line; do
-  count=$((count + 1))
-  eval "result$count=\"$line\""
+  result_array+=("$line")
 done <<< "$results"
 
-res_script_version=$result1
-res_upgrade=$result2
-res_os=$result3
+res_script_version=$result_array[0]
+res_upgrade=$result_array[1]
+res_os=$result_array[2]
+
 
 #
 # VERIFICANDO VERSAO DO SCRIPT
 #
-if [ "$res_script_version" != "$VERSAO" ]; then
+if [ "$res_script_version" != "$VERSAO" && ! -f /root/scgit ]]; then ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
