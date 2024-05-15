@@ -11,11 +11,68 @@
 #
 #
 #
-VERSAO=22.2
+VERSAO=221
+
+#
+# CARREGAR VARIAVEIS DE AMBIENTE
+#
+Hostname=$(hostname -s)
+Domain=$(hostname -d)
+Fqdn=$(hostname -f)
+Iplocal=`hostname -i`
+Ipv4=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p)
+Ipv6=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p)
+
+#
+# VARIAVEIS DE BANCO DE DADOS
+#
+DBhost=100.64.66.211
+DBuser=b3server
+DBpass=Blue3DBx2623y
+DBdatabase=server
+#
+# CONECTANDO COM O BANCO DE DADOS MYSQL
+#
+SQL_QUERY = "SELECT script_version,upgrade FROM vm WHERE hostnames = '$Hostname' AND ativo = '1' LIMIT 1"
+result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
+if [ $? -ne 0 ]; then
+	echo "Erro ao conectar com o banco de dados!"
+	exit 1
+fi
+#
+# VERIFICANDO VERSAO DO SCRIPT
+#
+if [ "${result[0]}" != "$VERSAO" ]; then
+	echo "Versão do script é diferente da versão do banco de dados"
+	#
+	# UPDATE DO SCRIPT
+	#
+	if [ "$1" == "--update" ]; then
+		wget https://raw.githubusercontent.com/samirhvbr/Linux-Start/master/script.bash?token=GHSAT0AAAAAACRWOHOGJY5L54MQEJW7YC76ZSD3MVQ -O /root/script.sh
+		chmod +x /root/script.sh
+		echo "Script Atualizado! \\nVersion: $VERSION"
+		./script.sh
+		exit
+	fi
+fi
+#
+# VERIFICANDO SE PRECISA ATUALIZAR O OS
+#
+if [ "${result[1]}" == "1" ]; then
+	echo "Precisa atualizar o script"
+else
+	echo "Não precisa atualizar o script"
+fi
+
+
+
+exit
+
+
 
 
 #
-# RETORNO DE VERSAO
+# RETORNANDO A VERSAO
 #
 if [ "$1" == "--version" ]; then
 	echo "${VERSION}"
@@ -24,15 +81,7 @@ fi
 
 
 
-#
-# UPDATE
-#
-if [ "$1" == "--update" ]; then
-	wget https://raw.githubusercontent.com/samirhvbr/Linux-Start/master/script.bash?token=GHSAT0AAAAAACRWOHOGJY5L54MQEJW7YC76ZSD3MVQ -O /root/script.sh
-	chmod +x /root/script.sh
-	echo "Script Atualizado! \\n$VERSION"
-	exit
-fi
+
 
 
 
@@ -61,7 +110,7 @@ fi
 
 
 #
-# VARIAVEIS
+# VARIAVEIS DE CORES
 #
 RED="\e[31m"
 YEL="\e[33m"
