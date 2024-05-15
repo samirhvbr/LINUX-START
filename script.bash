@@ -47,12 +47,87 @@ if [ "${result[0]}" != "$VERSAO" ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
-	wget https://files.b3.rs/blue3/scgit -O /root/script.sh
+	wget https://files.b3.rs/blue3/scgit -O /root/temporario
+	if [ -s /root/temporario ]; then
+		mv /root/temporario /root/script.sh
+	else
+		echo "O arquivo /root/temporario não existe ou está vazio."
+		echo "ERROR: 1"
+		exit 1
+	fi
 	chmod +x /root/script.sh
 	echo "Script Atualizado! \\nVersion: $VERSION"
+	SQL_QUERY="INSERT INTO script_log_update (hostnames,domain,ipv4_local,ipv6_local,script_version_old,script_version) VALUES ('$Hostname','$Domain','$Ipv4','$Ipv6','$VERSAO','${result[0]}')"
+	result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
+	if [ $? -ne 0 ]; then
+		echo "Erro ao conectar com o banco de dados! (2)"
+		exit 1
+	fi
 	./script.sh
 	exit
 fi
+
+
+#
+# VARIAVEIS DE STATUS DO SERVIDOR
+#
+total_memory=$(free -m | awk 'NR==2{print $2}')
+free_memory=$(free -m | awk 'NR==2{print $4}')
+cache_memory=$(free -m | awk 'NR==2{print $6}')
+swap_total=$(free -m | awk 'NR==2{print $2}')
+swap_usage=$(free -m | awk 'NR==3{print $3}')
+
+cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')
+cpu_load=$(top -bn1 | grep "load average:" | awk '{print $12 $13 $14}')
+cpu_jumps=$(top -bn1 | grep "load average:" | awk '{print $12 $13 $14}' | awk -F, '{print $1}')
+
+# VERIFICANDO ESPAÇO EM DISCO UTILIZADO
+root_disk_usage=$(df -h | awk '/\/$/ {print $5}' |tr -d '%')
+var_disk_usage=$(df -h | awk '/\/var$/' | awk '{print $5}' |tr -d '%')
+log_disk_usage=$(df -h | awk '/\/var\/log$/' | awk '{print $5}' |tr -d '%')
+srv_disk_usage=$(df -h | awk '/\/srv$/' | awk '{print $5}' |tr -d '%')
+# VERIFICAR AS PORTAS DE REDE EM QUAL VELOCIDADE ESTAO CONECTADAS
+# VERIFICAR SE O PACOTE ETHTOOL ESTA INSTALADO
+if [ ! -f /usr/sbin/ethtool ]; then
+	apt install ethtool -y
+fi
+rede_um=$(ethtool eth0 | grep Speed | awk '{print $2}' |tr -d 'Mb/s')
+# VERIFICAR SE EXISTE A ETH1
+if [ -f /sys/class/net/eth1 ]; then
+		rede_dois=$(ethtool eth1 | grep Speed | awk '{print $2}' |tr -d 'Mb/s')
+	else
+		rede_dois=0
+fi
+
+# LER OS LOGS CRITICOS ULTIMOS 10 USANDO O JOURNALCTL
+logs_crit=$(journalctl -p crit -n 10 --no-pager | tail -n +2)
+logs=$(journalctl -p 1..3 -n 10 --no-pager | tail -n +2)
+
+
+# INSERINDO NO BANCO DE DADOS
+SQL_QUERY="INSERT INTO vm_status (hostnames,ipv4_local,total_memory,free_memory,cache_memory,swap_total,swap_usage,cpu_usage,cpu_load,cpu_jumps,root_disk_usage,var_disk_usage,log_disk_usage,srv_disk_usage,eth0_vel,eth1_vel) VALUES ('$Hostname','$Ipv4','$total_memory','$free_memory','$cache_memory','$swap_total','$swap_usage','$cpu_usage','$cpu_load','$cpu_jumps','$root_disk_usage','$var_disk_usage','$log_disk_usage','$srv_disk_usage','$rede_um','$rede_dois')"
+result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
+if [ $? -ne 0 ]; then
+	echo "Erro ao conectar com o banco de dados! (3)"
+	exit 1
+fi
+
+SQL_QUERY="INSERT INTO vm_status_log (hostnames,ipv4_local,log) VALUES ('$Hostname','$Ipv4','$logs')"
+result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
+if [ $? -ne 0 ]; then
+	echo "Erro ao conectar com o banco de dados! (4)"
+	exit 1
+fi
+
+SQL_QUERY="INSERT INTO vm_status_logcrit (hostnames,ipv4_local,log) VALUES ('$Hostname','$Ipv4','$logs_crit')"
+result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
+if [ $? -ne 0 ]; then
+	echo "Erro ao conectar com o banco de dados! (5)"
+	exit 1
+fi
+
+
+
 #
 # VERIFICANDO SE PRECISA ATUALIZAR O OS
 #
