@@ -47,15 +47,13 @@ if [ "${result}" != "$VERSAO" ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
-	wget https://files.b3.rs/blue3/scgit -O /root/temporario
-	if [ -s /root/temporario ]; then
-		mv /root/temporario /root/script.sh
-	else
-		echo "O arquivo /root/temporario não existe ou está vazio."
+	wget https://files.b3.rs/blue3/scgit -O /root/scgit.sh
+	if [ ! -s /root/scgit.sh ]; then
+		echo "O arquivo /root/scgit.sh não existe ou está vazio."
 		echo "ERROR: 1"
 		exit 1
 	fi
-	chmod +x /root/script.sh
+	chmod +x /root/scgit.sh
 	echo "Script Atualizado! \\nVersion: $VERSION"
 	SQL_QUERY="INSERT INTO script_log_update (hostnames,domain,ipv4_local,ipv6_local,script_version_old,script_version) VALUES ('$Hostname','$Domain','$Ipv4','$Ipv6','$VERSAO','${result[0]}')"
 	result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
@@ -63,8 +61,8 @@ if [ "${result}" != "$VERSAO" ]; then
 		echo "Erro ao conectar com o banco de dados! (2)"
 		exit 1
 	fi
-	./script.sh
-	exit
+	/root/scgit.sh
+	exit 1
 fi
 
 
