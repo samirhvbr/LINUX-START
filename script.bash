@@ -24,15 +24,12 @@ Ipv4=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p)
 Ipv6=$(ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p)
 
 #
-# VARIAVEIS DE BANCO DE DADOS
+# CONEXAO COM O BANCO DE DADOS
 #
 DBhost=100.64.66.211
 DBuser=b3server
 DBpass=Blue3DBx2623y
 DBdatabase=server
-#
-# CONECTANDO COM O BANCO DE DADOS MYSQL
-#
 SQL_QUERY="SELECT script_version FROM vm WHERE hostname = '$Hostname' AND ativo = '1' LIMIT 1"
 result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY")
 if [ $? -ne 0 ]; then
@@ -42,11 +39,11 @@ fi
 #
 # VERIFICANDO VERSAO DO SCRIPT
 #
-if [ "${result}" != "$VERSAO" ]; then
-	echo "Versão do script é diferente da versão do banco de dados"
+if [ "$result" != "$VERSAO" ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
+	echo "Versão do script é diferente da versão do banco de dados"
 	wget https://files.b3.rs/blue3/scgit -O /root/scgit.sh
 	if [ ! -s /root/scgit.sh ]; then
 		echo "O arquivo /root/scgit.sh não existe ou está vazio."
@@ -55,8 +52,8 @@ if [ "${result}" != "$VERSAO" ]; then
 	fi
 	chmod +x /root/scgit.sh
 	echo "Script Atualizado!"
-	SQL_QUERY="INSERT INTO script_log_update (hostname,domain,ipv4_local,ipv6_local,script_version_old,script_version) VALUES ('$Hostname','$Domain','$Ipv4','$Ipv6','$VERSAO','$result')"
-	result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY")
+	SQL_QUERY_a="INSERT INTO script_log_update (hostname,domain,ipv4_local,ipv6_local,script_version_old,script_version) VALUES ('$Hostname','$Domain','$Ipv4','$Ipv6','$VERSAO','$result')"
+	result_a=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY_a")
 	if [ $? -ne 0 ]; then
 		echo "Erro ao conectar com o banco de dados! (2)"
 		exit 1
@@ -107,22 +104,22 @@ logs=$(journalctl -p 1..3 -n 10 --no-pager | tail -n +2)
 
 
 # INSERINDO NO BANCO DE DADOS
-SQL_QUERY="INSERT INTO vm_status (hostname,ipv4_local,total_memory,free_memory,cache_memory,swap_total,swap_usage,cpu_usage,cpu_load,cpu_jumps,root_disk_usage,var_disk_usage,log_disk_usage,srv_disk_usage,eth0_vel,eth1_vel) VALUES ('$Hostname','$Ipv4','$total_memory','$free_memory','$cache_memory','$swap_total','$swap_usage','$cpu_usage','$cpu_load','$cpu_jumps','$root_disk_usage','$var_disk_usage','$log_disk_usage','$srv_disk_usage','$rede_um','$rede_dois')"
-result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY")
+SQL_QUERY_b="INSERT INTO vm_status (hostname,ipv4_local,total_memory,free_memory,cache_memory,swap_total,swap_usage,cpu_usage,cpu_load,cpu_jumps,root_disk_usage,var_disk_usage,log_disk_usage,srv_disk_usage,eth0_vel,eth1_vel) VALUES ('$Hostname','$Ipv4','$total_memory','$free_memory','$cache_memory','$swap_total','$swap_usage','$cpu_usage','$cpu_load','$cpu_jumps','$root_disk_usage','$var_disk_usage','$log_disk_usage','$srv_disk_usage','$rede_um','$rede_dois')"
+result_b=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY_b")
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados! (3)"
 	exit 1
 fi
 
-SQL_QUERY="INSERT INTO vm_status_log (hostname,ipv4_local,log) VALUES ('$Hostname','$Ipv4','$logs')"
-result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY")
+SQL_QUERY_c="INSERT INTO vm_status_log (hostname,ipv4_local,log) VALUES ('$Hostname','$Ipv4','$logs')"
+result_c=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY_c")
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados! (4)"
 	exit 1
 fi
 
-SQL_QUERY="INSERT INTO vm_status_logcrit (hostname,ipv4_local,log) VALUES ('$Hostname','$Ipv4','$logs_crit')"
-result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY")
+SQL_QUERY_d="INSERT INTO vm_status_logcrit (hostname,ipv4_local,log) VALUES ('$Hostname','$Ipv4','$logs_crit')"
+result_d=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY_d")
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados! (5)"
 	exit 1
