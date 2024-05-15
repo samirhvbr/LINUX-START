@@ -33,7 +33,7 @@ DBdatabase=server
 #
 # CONECTANDO COM O BANCO DE DADOS MYSQL
 #
-SQL_QUERY = "SELECT script_version,upgrade FROM vm WHERE hostnames = '$Hostname' AND ativo = '1' LIMIT 1"
+SQL_QUERY="SELECT script_version,upgrade FROM vm WHERE hostnames = '$Hostname' AND ativo = '1' LIMIT 1"
 result=$(mysql -h "$DBhost" -u "$DBuser" -p"$DBpass" -D "$DBdatabase" -e "$SQL_QUERY" | tail -n +2)	
 if [ $? -ne 0 ]; then
 	echo "Erro ao conectar com o banco de dados!"
@@ -47,13 +47,11 @@ if [ "${result[0]}" != "$VERSAO" ]; then
 	#
 	# UPDATE DO SCRIPT
 	#
-	if [ "$1" == "--update" ]; then
-		wget https://raw.githubusercontent.com/samirhvbr/Linux-Start/master/script.bash?token=GHSAT0AAAAAACRWOHOGJY5L54MQEJW7YC76ZSD3MVQ -O /root/script.sh
-		chmod +x /root/script.sh
-		echo "Script Atualizado! \\nVersion: $VERSION"
-		./script.sh
-		exit
-	fi
+	wget https://files.b3.rs/blue3/scgit -O /root/script.sh
+	chmod +x /root/script.sh
+	echo "Script Atualizado! \\nVersion: $VERSION"
+	./script.sh
+	exit
 fi
 #
 # VERIFICANDO SE PRECISA ATUALIZAR O OS
