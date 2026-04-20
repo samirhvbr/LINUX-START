@@ -1,0 +1,11 @@
+Port {{SSH_PORT}}
+LoginGraceTime {{LOGIN_GRACE}}
+SyslogFacility AUTH
+LogLevel INFO
+PermitRootLogin no
+StrictModes yes
+PermitEmptyPasswords no
+X11DisplayOffset 10
+PrintMotd no
+PrintLastLog no
+TCPKeepAlive yes

@@ -1,21 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-#
-#
-#
-#  * Autor: Samir Hanna Verza
-#  * Criado: 20/01/2023
-#  * 
-#  * Ult. Atualizacao: 
-#  * Versaoo: 22.0
-#
-#
-#
-VERSAO=22.0
+set -Eeuo pipefail
 
-#
-# VARIAVEIS
-#
+VERSION="23.1"
+SCRIPT_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATE_DIR="$SCRIPT_DIR/templates"
+ENV_FILE="${BLUE3_ENV_FILE:-$SCRIPT_DIR/.env}"
+VERSION_FILE="$SCRIPT_DIR/VERSION"
+
+# ==========================
+# CORES
+# ==========================
 RED="\e[31m"
 YEL="\e[33m"
 BLU="\e[34m"
@@ -23,569 +19,798 @@ WHI="\e[97m"
 GREEN="\e[32m"
 ENDCOLOR="\e[0m"
 
+# ==========================
+# VARIAVEIS DE EXECUCAO
+# ==========================
+RUN_ID="$(date +%Y%m%d%H%M%S)"
+DATE_STAMP="$(date +%Y%m%d)"
+LOG_FILE="/root/blue3_start_${RUN_ID}.log"
+BACKUP_DIR="/root/blue3_start_${RUN_ID}"
 
-#
-# CRIANDO PASTA DOS BACKUPS E LOG
-#
-DATE=`date +%Y%m%d`
-DATE2=`date +%Y%m%d%s`
-LOG='/root/shv_script_${DATE2}.log'
-DIR=/root/$DATE2
-#if [ -d "/root/${DATE2}/" ]; then
-    mkdir $DIR
-#else
-	#mkdir $DIR
-#fi
+# ==========================
+# VARIAVEIS DE AJUSTE RAPIDO
+# ==========================
+REQUIRED_DEBIAN_MAJOR="${REQUIRED_DEBIAN_MAJOR:-11}"
+DEFAULT_DOMAIN="${DEFAULT_DOMAIN:-b3.local}"
+DEFAULT_SSH_PORT="${DEFAULT_SSH_PORT:-22}"
+DEFAULT_LOGIN_GRACE="${DEFAULT_LOGIN_GRACE:-30}"
+DEFAULT_ROOT_IPS="${DEFAULT_ROOT_IPS:-100.64.66.0/24,170.233.230.254,170.233.230.222}"
+DEFAULT_ZABBIX_SERVER="${DEFAULT_ZABBIX_SERVER:-100.64.66.8}"
+ZABBIX_RELEASE_URL="${ZABBIX_RELEASE_URL:-}"
+UPDATE_REPO_OWNER="${UPDATE_REPO_OWNER:-samirhvbr}"
+UPDATE_REPO_NAME="${UPDATE_REPO_NAME:-Linux-Start}"
+UPDATE_REPO_BRANCH="${UPDATE_REPO_BRANCH:-master}"
 
+BASIC_PACKAGES=(
+	zip
+	fail2ban
+	iptables
+	w3m
+	unzip
+	net-tools
+	bash-completion
+	traceroute
+	grc
+	fzf
+	htop
+	iotop
+	iftop
+	whois
+	tree
+	mtr-tiny
+	locate
+	curl
+	python3
+)
 
+log_raw() {
+	printf '%s\n' "$*" >> "$LOG_FILE"
+}
 
-# apt install ntp
-# server 100.64.66.230 prefer iburst
+info() {
+	printf '%b[INFO]%b %s\n' "$GREEN" "$ENDCOLOR" "$*"
+	log_raw "[INFO] $*"
+}
 
+warn() {
+	printf '%b[WARN]%b %s\n' "$YEL" "$ENDCOLOR" "$*" >&2
+	log_raw "[WARN] $*"
+}
 
+error() {
+	printf '%b[ERRO]%b %s\n' "$RED" "$ENDCOLOR" "$*" >&2
+	log_raw "[ERRO] $*"
+}
 
-#
-# CONFIG SERVER
-#
-config_server (){
-	clear
-	echo ;echo 
-	echo "VAMOS EFETUAR A CONFIGURACAO INICIAL DO SERVIDOR"
-	echo ;echo ;echo 
-	
-	hostname=`hostname -s` >> $LOG 2>&1
-	domain=`hostname -d` >> $LOG 2>&1
-	fqdn=`hostname -f` >> $LOG 2>&1
-	iplocal=`hostname -i` >> $LOG 2>&1
-	ipv4=`ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p` >> $LOG 2>&1
-	ipv6=`ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p` >> $LOG 2>&1
+divider() {
+	printf '%b----------------------------------------------------------------------------------------------------%b\n' "$WHI" "$ENDCOLOR"
+}
 
-	
-	read -p "Qual o hostname do servidor? (${hostname})? " choice
-	if [ -z $choice ]; then
-		echo "OK, nada a ser feito!"
+print_step() {
+	printf ' >> %-74s' "$1"
+}
+
+run_step() {
+	local description="$1"
+	shift
+
+	print_step "$description"
+	if "$@" >> "$LOG_FILE" 2>&1; then
+		printf '%b [ OK ] %b\n' "$YEL" "$ENDCOLOR"
 	else
-		hostnamectl set-hostname $choice
-		echo "hostname alterado"
+		printf '%b [ERRO] %b\n' "$RED" "$ENDCOLOR"
+		error "Falha em: $description. Consulte $LOG_FILE"
+		return 1
+	fi
+}
+
+prompt_default() {
+	local label="$1"
+	local default_value="$2"
+	local answer
+
+	read -r -p "$label [$default_value]: " answer
+	printf '%s' "${answer:-$default_value}"
+}
+
+confirm() {
+	local label="$1"
+	local default_answer="${2:-N}"
+	local answer
+
+	read -r -p "$label ($( [[ "$default_answer" =~ ^[SsYy]$ ]] && printf 'S/n' || printf 's/N' )) " answer
+	answer="${answer:-$default_answer}"
+
+	[[ "$answer" =~ ^[SsYy]$ ]]
+}
+
+backup_file() {
+	local target="$1"
+	local relative_path
+
+	[[ -e "$target" ]] || return 0
+
+	relative_path="${target#/}"
+	mkdir -p "$BACKUP_DIR/$(dirname "$relative_path")"
+	cp -a "$target" "$BACKUP_DIR/$relative_path"
+}
+
+restore_backup() {
+	local target="$1"
+	local relative_path
+
+	relative_path="${target#/}"
+	[[ -e "$BACKUP_DIR/$relative_path" ]] || return 1
+
+	cp -a "$BACKUP_DIR/$relative_path" "$target"
+}
+
+load_local_version() {
+	if [[ -f "$VERSION_FILE" ]]; then
+		VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+	fi
+}
+
+load_env_file() {
+	if [[ -f "$ENV_FILE" ]]; then
+		# shellcheck disable=SC1090
+		set -a
+		source "$ENV_FILE"
+		set +a
+		info "Arquivo .env carregado: $ENV_FILE"
+	else
+		info "Arquivo .env nao encontrado. Usando valores padrao internos."
+	fi
+}
+
+get_remote_version_url() {
+	printf 'https://raw.githubusercontent.com/%s/%s/%s/VERSION' "$UPDATE_REPO_OWNER" "$UPDATE_REPO_NAME" "$UPDATE_REPO_BRANCH"
+}
+
+get_remote_archive_url() {
+	printf 'https://github.com/%s/%s/archive/refs/heads/%s.tar.gz' "$UPDATE_REPO_OWNER" "$UPDATE_REPO_NAME" "$UPDATE_REPO_BRANCH"
+}
+
+fetch_remote_version() {
+	wget -qO- "$(get_remote_version_url)" 2>> "$LOG_FILE" | tr -d '[:space:]'
+}
+
+version_greater_than() {
+	local left="$1"
+	local right="$2"
+	[[ "$(printf '%s\n%s\n' "$left" "$right" | sort -V | tail -n1)" == "$left" && "$left" != "$right" ]]
+}
+
+check_for_updates() {
+	local remote_version
+
+	ensure_internet || return 1
+
+	remote_version="$(fetch_remote_version || true)"
+	if [[ -z "$remote_version" ]]; then
+		warn "Nao foi possivel obter a versao remota em $(get_remote_version_url)"
+		return 1
 	fi
 
-	changedomain (){
-		read -p "Qual o dominio para este servidor ? " DOMAIN
-		echo "127.0.0.1       localhost" > /etc/hosts
-		echo "${ipv4}    ${hostname}.${DOMAIN}    git" >> /etc/hosts
-		echo "" >> /etc/hosts
-		echo "# The following lines are desirable for IPv6 capable hosts" >> /etc/hosts
-		echo "::1     localhost ip6-localhost ip6-loopback" >> /etc/hosts
-		echo "ff02::1 ip6-allnodes" >> /etc/hosts
-		echo "ff02::2 ip6-allrouters" >> /etc/hosts
-		sed -i "s/`hostname -d`/${DOMAIN}/g" /etc/network/interfaces
+	printf 'Versao local : %s\n' "$VERSION"
+	printf 'Versao remota: %s\n' "$remote_version"
+
+	if version_greater_than "$remote_version" "$VERSION"; then
+		info "Existe atualizacao disponivel no GitHub."
+		return 0
+	fi
+
+	info "Projeto ja esta na versao mais recente conhecida."
+	return 2
+}
+
+self_update_project() {
+	local remote_version
+	local archive_url
+	local tmp_dir
+	local archive_file
+	local extracted_dir
+	local project_backup_dir
+
+	ensure_internet || return 1
+
+	remote_version="$(fetch_remote_version || true)"
+	if [[ -z "$remote_version" ]]; then
+		error "Nao foi possivel consultar a versao remota. O repositorio ainda pode nao ter o arquivo VERSION publicado."
+		return 1
+	fi
+
+	if ! version_greater_than "$remote_version" "$VERSION"; then
+		info "Nenhuma atualizacao disponivel. Local: $VERSION | Remota: $remote_version"
+		return 0
+	fi
+
+	printf 'Versao local : %s\n' "$VERSION"
+	printf 'Versao remota: %s\n' "$remote_version"
+	if ! confirm "Deseja baixar e aplicar esta atualizacao agora?" "S"; then
+		warn "Atualizacao cancelada pelo operador."
+		return 0
+	fi
+
+	archive_url="$(get_remote_archive_url)"
+	tmp_dir="$(mktemp -d)"
+	archive_file="$tmp_dir/${UPDATE_REPO_NAME}.tar.gz"
+	project_backup_dir="$BACKUP_DIR/project_self_update"
+
+	run_step "Baixando pacote do projeto no GitHub" wget -O "$archive_file" "$archive_url" || {
+		rm -rf "$tmp_dir"
+		return 1
 	}
-	#echo ;echo ;read -p "Esta correto o dominio deste servidor (${domain}) (S/n) ? " DOMAIN
-	#case "$DOMAIN" in
-	#	s|S|y|Y ) echo "OK, nada a ser feito!" ;;
-	#	n|N ) changedomain ;;
-	#	* ) echo "OK, nada a ser feito!" ;;
-	#esac
 
-	
-	changeip (){
-		read -p "Qual a interface da placa de rede a ser ajustada (ex: eth0)? " NETI
-		read -p "Qual o IPv4 da porta (${NETI})? " IPV4
-		read -p "Qual a mascara do IPv4 (${IPV4}) (ex: 24) ? " MASK4
-		read -p "Qual o gateway do IPV4 (${IPV4}) ? " GW4
+	run_step "Extraindo pacote de atualizacao" tar -xzf "$archive_file" -C "$tmp_dir" || {
+		rm -rf "$tmp_dir"
+		return 1
+	}
 
-		read -p "Vamos configurar IPv6 neste servidor (S/n) ? " ipv6s
-		if [[ $ipv6s == [sS] ]]; then
-			ipv6s=1
-			read -p "Qual o IPv6 da porta ${NETI}? " IPV6
-			read -p "Qual a mascara do IPv6 (${IPV6}) (ex: 64) ? " MASK6
-			read -p "Qual o gateway do IPV6 (${IPV6}) ? " GW6
-		else
-			ipv6s=0
+	extracted_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+	if [[ -z "$extracted_dir" ]]; then
+		rm -rf "$tmp_dir"
+		error "Nao foi possivel localizar o conteudo extraido da atualizacao."
+		return 1
+	fi
+
+	if [[ ! -f "$extracted_dir/VERSION" || ! -f "$extracted_dir/script.sh" ]]; then
+		rm -rf "$tmp_dir"
+		error "Pacote remoto nao contem a estrutura minima esperada."
+		return 1
+	fi
+
+	mkdir -p "$project_backup_dir"
+	cp -a "$SCRIPT_DIR/." "$project_backup_dir/"
+	cp -a "$extracted_dir/." "$SCRIPT_DIR/"
+	chmod +x "$SCRIPT_DIR/script.sh"
+	rm -rf "$tmp_dir"
+
+	info "Projeto atualizado para a versao $remote_version"
+	info "Backup do projeto anterior salvo em $project_backup_dir"
+	info "Reiniciando o script atualizado..."
+	exec bash "$SCRIPT_DIR/script.sh"
+}
+
+require_files() {
+	local file_path
+	local missing=()
+
+	for file_path in "$@"; do
+		if [[ ! -f "$file_path" ]]; then
+			missing+=("$file_path")
 		fi
+	done
 
-		read -p "Qual os servidores DNS (separados por espaco) ? " DNSs
-		#read -p "Qual o dominio para este servidor (${domain}) ? " DOMAIN
-		
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		error "Arquivos obrigatorios ausentes: ${missing[*]}"
+		exit 1
+	fi
+}
 
-cat <<\EOF >/etc/network/interfaces
+copy_template() {
+	local template_rel="$1"
+	local destination="$2"
+	local source_file="$TEMPLATE_DIR/$template_rel"
+
+	if [[ ! -f "$source_file" ]]; then
+		error "Template nao encontrado: $source_file"
+		return 1
+	fi
+
+	cp "$source_file" "$destination"
+}
+
+render_template() {
+	local template_rel="$1"
+	local destination="$2"
+	local source_file="$TEMPLATE_DIR/$template_rel"
+	local key
+	local value
+	local escaped
+
+	shift 2
+
+	if [[ ! -f "$source_file" ]]; then
+		error "Template nao encontrado: $source_file"
+		return 1
+	fi
+
+	cp "$source_file" "$destination"
+
+	while [[ $# -gt 1 ]]; do
+		key="$1"
+		value="$2"
+		shift 2
+		escaped="$(printf '%s' "$value" | sed -e 's/[\/&]/\\&/g')"
+		sed -i "s|{{${key}}}|$escaped|g" "$destination"
+	done
+}
+
+require_root() {
+	if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+		error "Este script precisa ser executado como root."
+		exit 1
+	fi
+}
+
+require_debian() {
+	local debian_major
+
+	if [[ ! -r /etc/os-release ]]; then
+		error "Nao foi possivel identificar o sistema operacional."
+		exit 1
+	fi
+
+	# shellcheck disable=SC1091
+	source /etc/os-release
+
+	if [[ "${ID:-}" != "debian" ]]; then
+		error "Este script foi preparado para Debian. Sistema detectado: ${ID:-desconhecido}."
+		exit 1
+	fi
+
+	debian_major="${VERSION_ID%%.*}"
+	if [[ -z "$debian_major" || "$debian_major" -lt "$REQUIRED_DEBIAN_MAJOR" ]]; then
+		error "Debian ${REQUIRED_DEBIAN_MAJOR} ou superior e obrigatorio. Versao detectada: ${VERSION_ID:-desconhecida}."
+		exit 1
+	fi
+}
+
+require_commands() {
+	local command_name
+	local missing=()
+
+	for command_name in "$@"; do
+		if ! command -v "$command_name" > /dev/null 2>&1; then
+			missing+=("$command_name")
+		fi
+	done
+
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		error "Comandos ausentes: ${missing[*]}"
+		exit 1
+	fi
+}
+
+ensure_internet() {
+	if ping -c1 -W2 1.1.1.1 >> "$LOG_FILE" 2>&1; then
+		return 0
+	fi
+
+	warn "Sem conectividade com a internet. Esta etapa pode falhar."
+	return 1
+}
+
+get_default_iface() {
+	ip route | awk '/default/ {print $5; exit}'
+}
+
+get_default_gateway_v4() {
+	ip route | awk '/default/ {print $3; exit}'
+}
+
+get_primary_ipv4() {
+	local iface="$1"
+	ip -o -4 addr show dev "$iface" scope global | awk '{print $4; exit}'
+}
+
+get_primary_ipv6() {
+	local iface="$1"
+	ip -o -6 addr show dev "$iface" scope global | awk '{print $4; exit}'
+}
+
+get_dns_servers() {
+	awk '/^nameserver/ {print $2}' /etc/resolv.conf | paste -sd' ' -
+}
+
+validate_ssh_config() {
+	sshd -t >> "$LOG_FILE" 2>&1
+}
+
+init_environment() {
+	mkdir -p "$BACKUP_DIR"
+	touch "$LOG_FILE"
+	log_raw "Inicio da execucao do $SCRIPT_NAME"
+	log_raw "Versao: $VERSION"
+	log_raw "Data stamp: $DATE_STAMP"
+	log_raw "Backup dir: $BACKUP_DIR"
+	log_raw "Log file: $LOG_FILE"
+}
+
+config_server() {
+	local current_hostname
+	local current_domain
+	local current_fqdn
+	local default_iface
+	local current_ipv4
+	local current_ipv6
+	local hostname_value
+	local domain_value
+	local host_ipv4
+
+	clear
+	info "Configuracao inicial do servidor"
+	divider
+
+	current_hostname="$(hostname -s)"
+	current_domain="$(hostname -d 2>>"$LOG_FILE" || true)"
+	current_fqdn="$(hostname -f 2>>"$LOG_FILE" || true)"
+	default_iface="$(get_default_iface 2>>"$LOG_FILE" || true)"
+	current_ipv4="$( [[ -n "$default_iface" ]] && get_primary_ipv4 "$default_iface" 2>>"$LOG_FILE" || true )"
+	current_ipv6="$( [[ -n "$default_iface" ]] && get_primary_ipv6 "$default_iface" 2>>"$LOG_FILE" || true )"
+
+	printf 'Hostname atual : %s\n' "$current_hostname"
+	printf 'Dominio atual  : %s\n' "${current_domain:-<vazio>}"
+	printf 'FQDN atual     : %s\n' "${current_fqdn:-<vazio>}"
+	printf 'Interface      : %s\n' "${default_iface:-<nao detectada>}"
+	printf 'IPv4 atual     : %s\n' "${current_ipv4:-<nao detectado>}"
+	printf 'IPv6 atual     : %s\n' "${current_ipv6:-<nao detectado>}"
+	divider
+
+	hostname_value="$(prompt_default "Qual o hostname do servidor?" "$current_hostname")"
+	if [[ "$hostname_value" != "$current_hostname" ]]; then
+		run_step "Alterando hostname" hostnamectl set-hostname "$hostname_value" || return 1
+		current_hostname="$hostname_value"
+	else
+		info "Hostname mantido: $current_hostname"
+	fi
+
+	domain_value="$(prompt_default "Qual o dominio do servidor?" "${current_domain:-$DEFAULT_DOMAIN}")"
+
+	if confirm "Deseja reescrever /etc/hosts com hostname e dominio atuais?" "S"; then
+		backup_file /etc/hosts
+		host_ipv4="${current_ipv4%%/*}"
+		host_ipv4="${host_ipv4:-127.0.1.1}"
+
+		cat > /etc/hosts <<EOF
+127.0.0.1       localhost
+$host_ipv4      ${current_hostname}.${domain_value} ${current_hostname}
+
+# The following lines are desirable for IPv6 capable hosts
+::1             localhost ip6-localhost ip6-loopback
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters
+EOF
+		info "/etc/hosts atualizado. Backup em $BACKUP_DIR"
+	fi
+
+	if confirm "Deseja reconfigurar a interface de rede?" "N"; then
+		change_ip "$current_hostname" "$domain_value" "$default_iface" "$current_ipv4" "$current_ipv6" || return 1
+	fi
+
+	divider
+}
+
+change_ip() {
+	local hostname_value="$1"
+	local domain_value="$2"
+	local current_iface="$3"
+	local current_ipv4="$4"
+	local current_ipv6="$5"
+	local iface
+	local ipv4_ip
+	local ipv4_mask
+	local ipv4_gateway
+	local dns_servers
+	local enable_ipv6
+	local ipv6_ip
+	local ipv6_mask
+	local ipv6_gateway
+	local current_ipv4_ip
+	local current_ipv4_mask
+	local current_ipv6_ip
+	local current_ipv6_mask
+	local default_dns
+
+	current_ipv4_ip="${current_ipv4%%/*}"
+	current_ipv4_mask="${current_ipv4##*/}"
+	[[ "$current_ipv4_ip" == "$current_ipv4" ]] && current_ipv4_mask="24"
+
+	current_ipv6_ip="${current_ipv6%%/*}"
+	current_ipv6_mask="${current_ipv6##*/}"
+	[[ "$current_ipv6_ip" == "$current_ipv6" ]] && current_ipv6_mask="64"
+
+	default_dns="$(get_dns_servers 2>>"$LOG_FILE" || true)"
+
+	iface="$(prompt_default "Qual a interface da placa de rede?" "${current_iface:-eth0}")"
+	ipv4_ip="$(prompt_default "Qual o IPv4 da interface ${iface}?" "${current_ipv4_ip:-100.64.66.88}")"
+	ipv4_mask="$(prompt_default "Qual a mascara do IPv4 (CIDR)?" "${current_ipv4_mask:-24}")"
+	ipv4_gateway="$(prompt_default "Qual o gateway do IPv4?" "$(get_default_gateway_v4 2>>"$LOG_FILE" || true)")"
+	dns_servers="$(prompt_default "Quais os servidores DNS (separados por espaco)?" "${default_dns:-1.1.1.1 8.8.8.8}")"
+
+	if confirm "Deseja configurar IPv6?" "N"; then
+		enable_ipv6="1"
+		ipv6_ip="$(prompt_default "Qual o IPv6 da interface ${iface}?" "${current_ipv6_ip:-2804:2c24:dc:1::2}")"
+		ipv6_mask="$(prompt_default "Qual a mascara do IPv6 (CIDR)?" "${current_ipv6_mask:-64}")"
+		ipv6_gateway="$(prompt_default "Qual o gateway do IPv6?" "")"
+	else
+		enable_ipv6="0"
+		ipv6_ip=""
+		ipv6_mask=""
+		ipv6_gateway=""
+	fi
+
+	backup_file /etc/network/interfaces
+
+	cat > /etc/network/interfaces <<EOF
 # This file describes the network interfaces available on your system
 # and how to activate them. For more information, see interfaces(5).
+
 source /etc/network/interfaces.d/*
-# The loopback network interface
+
 auto lo
 iface lo inet loopback
-# The primary network interface
+
+allow-hotplug ${iface}
+iface ${iface} inet static
+	address ${ipv4_ip}/${ipv4_mask}
+	gateway ${ipv4_gateway}
+	dns-nameservers ${dns_servers}
+	dns-search ${domain_value}
 EOF
 
-	echo "allow-hotplug ${NETI}" >> /etc/network/interfaces
-	echo "iface ${NETI} inet static" >> /etc/network/interfaces
-	echo "	address ${IPV4}/${MASK4}" >> /etc/network/interfaces
-	echo "	gateway ${GW4}" >> /etc/network/interfaces
-	echo "	dns-nameserver ${DNSs}" >> /etc/network/interfaces
-	echo "	dns-search ${domain}" >> /etc/network/interfaces
-	echo "" >> /etc/network/interfaces
-	if [ "$ipv6s" -eq 1 ]; then
-		echo "iface ${NETI} inet6 static" >> /etc/network/interfaces
-		echo "	pre-up modprobe ipv6" >> /etc/network/interfaces
-		echo "	address ${IPV6}" >> /etc/network/interfaces
-		echo "	netmask ${MASK6}" >> /etc/network/interfaces
-		echo "	gateway ${GW6}" >> /etc/network/interfaces
+	if [[ "$enable_ipv6" == "1" ]]; then
+		cat >> /etc/network/interfaces <<EOF
+
+iface ${iface} inet6 static
+	address ${ipv6_ip}/${ipv6_mask}
+	gateway ${ipv6_gateway}
+EOF
 	fi
 
+	backup_file /etc/hosts
+	cat > /etc/hosts <<EOF
+127.0.0.1       localhost
+${ipv4_ip}      ${hostname_value}.${domain_value} ${hostname_value}
 
-	echo ;echo ;echo "Para que as atualizacoes tenham efeito, eh preciso reiniciar o servico de network"; echo ;echo ;
-	echo -n " >> Reconfigurando a network................................................"
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ;echo 
-	}
-
-	echo ;echo ;read -p "O IPv4 local do servidor esta correto (${ipv4}) (S/n) ? " choice
-	case "$choice" in
-		s|S|y|Y ) echo "OK, nada a ser feito!";echo ;echo ; ;;
-		n|N ) changeip ;;
-		* ) echo "OK, nada a ser feito!";echo ;echo ; ;;
-	esac
-}
-
-
-
-
-
-
-
-#
-# Update e upgrade do sistem
-#
-install_update_upgrade () {
-	echo ;echo 
-	echo -n " >> Update do sistema......................................................."
-	apt update --allow-unauthenticated >> $LOG 2>&1
-	apt update --allow-insecure-repositories >> $LOG 2>&1
-	apt update  >> $LOG 2>&1
-	#apt update >> $LOG 2>&1
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo
-
-	echo -n " >> Upgrade do sistema......................................................"
-    apt -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade >> $LOG 2>&1
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo
-
-	echo -n " >> Clear do sistema........................................................"
-    apt clean >> $LOG 2>&1
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo
-
-	echo -n " >> Autoremove do sistema..................................................."
-    apt autoremove -y >> $LOG 2>&1
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ;echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
-}
-
-
-
-#
-# CONTINUAR
-# INSTALANDO APPS BASIC
-#
-install_appbasic (){ 
-    echo ;echo 
-    echo -n " >> Instalando apps basicos................................................."
-    apt install zip openssh-server fail2ban iptables wget w3m vim gzip unzip xfsprogs btrfs-progs net-tools zstd bash-completion apt-transport-https traceroute grc fzf htop iotop iftop hdparm whois tree mtr-tiny locate curl python3 -y >> $LOG 2>&1
-    sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ;echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
-}
-
-
-
-#
-# BANNER BLUE3
-#
-banner_blue3 (){
-    echo; echo 
-    echo -n " >> Aplicando banne BLUE3..................................................."
-
-	cat /etc/motd > $DIR/motd.$DATE2
-	echo "" > /etc/motd
-
-	cat /etc/update-motd.d/10-uname > $DIR/10-uname.$DATE2
-	echo "#!/bin/bash" > /etc/update-motd.d/10-uname
-
-cat <<\EOF >/etc/update-motd.d/20-blue3
-#!/bin/bash
-
-# pegando o uptime do servidor
-upSeconds="$(/usr/bin/cut -d. -f1 /proc/uptime)"
-secs=$((${upSeconds}%60))
-mins=$((${upSeconds}/60%60))
-hours=$((${upSeconds}/3600%24))
-days=$((${upSeconds}/86400))
-UPTIME=`printf "%d days, %02dh%02dm%02ds" "$days" "$hours" "$mins" "$secs"`
-
-# pegando o load averages dos proc
-read one five fifteen rest < /proc/loadavg
-
-# demora muito para ler o ip
-# IP Addresses.......: `ip a | grep glo | awk '{print $2}' | head -1 | cut -f1 -d/`
-
-# modelo de CPU
-# cat /proc/cpuinfo |grep 'model name' |awk -F ":" '{print substr($2,2,300)}'
-# cat /proc/cpuinfo |grep 'model name' |awk -F ":" '{print substr($2,2,300)}' |sed -n -e 1p
-
-#echo -e "\033[93m"
-#echo "IPs"
-#ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,8p
-
-echo -e "
-\033[34m
-                                    BLUE3 INTERNET
- ____  _            ____            `date +"%A, %e %B %Y, %R:%S"`
-|  _ \| |          |___ \\           `uname -srmo `$(tput setaf 1)
-| |_) | |_   _  ___  __) |
-|  _ <| | | | |/ _ \|__ <           Uptime.............: ${UPTIME}
-| |_) | | |_| |  __/___) |          Memory.............: `cat /proc/meminfo |grep MemFree |awk {'print $2'}`kB (Free) / `cat /proc/meminfo | grep MemTotal | awk {'print $2'}`kB (Total)
-|____/|_|\__,_|\___|____/           CPU Info...........: `cat /proc/cpuinfo |grep 'model name' |awk -F ":" '{print substr($2,2,300)}' |sed -n -e 1p`
-                                    CPU Load...........: ${one}, ${five}, ${fifteen} (1, 5, 15 min)
-                                    
-\033[97m
-"
-#				    Running Processes..: `ps ax | wc -l | tr -d " "`
-#                                   IP Addresses IPv4..: `ip addr show |grep inet |awk '{print $2}' |sed -n -e 3,3p`
-#                                   IP Addresses.IPv6..: `ip addr show |grep inet |awk '{print $2}' |sed -n -e 4,4p`
-#				    IP Addresses Pub...: `curl -s "https://ifconfig.me/ip"`
-#
-#				    Time Zone..........: `curl ipinfo.io/timezone`
-#				    Local..............: `curl ipinfo.io/city`
-#				    Organization.......: `curl -s "https://ipinfo.io/org" |awk '{print $2,$3}'`
-#				    ASN................: `curl -s "https://ipinfo.io/org" |awk '{print $1}'`
-#for i in {16..21} {21..16} ; do echo -en "\e[38;5;${i}m  B3  \e[0m" ; done ; echo
-for i in {16..21} {21..16} ; do echo -en "\e[48;5;${i}m     \e[0m" ; done ; echo ; echo 
+# The following lines are desirable for IPv6 capable hosts
+::1             localhost ip6-localhost ip6-loopback
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters
 EOF
-chmod 755 /etc/update-motd.d/20-blue3
 
-	
-	sed -i "s/#PrintLastLog yes/PrintLastLog no/g" /etc/ssh/sshd_config
-
-
-    sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ; echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
+	warn "Rede reconfigurada em arquivo. Revise /etc/network/interfaces antes de reiniciar o servico de networking."
+	info "Backups salvos em $BACKUP_DIR"
 }
 
+install_update_upgrade() {
+	ensure_internet || return 1
 
+	export DEBIAN_FRONTEND=noninteractive
 
-#
-# SSH MOD
-#
-config_ssh (){
-	echo; echo 
-	echo -n " >> Iniciando a personalizacao do SSH..................................................."
-	echo ;echo 	
+	run_step "Atualizando indices do APT" apt update || return 1
+	run_step "Executando upgrade do sistema" apt -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade || return 1
+	run_step "Limpando cache do APT" apt clean || return 1
+	run_step "Removendo pacotes obsoletos" apt autoremove -y || return 1
+	divider
+}
 
-	PORTDEF=22
-	read -p "Confirma a porta do SSH (${PORTDEF})? " choice
-	if [ -z $choice ]; then
-		sed -i "s/#Port 22/Port ${PORTDEF}/g" /etc/ssh/sshd_config
-		echo 
+install_appbasic() {
+	ensure_internet || return 1
+	export DEBIAN_FRONTEND=noninteractive
+
+	run_step "Instalando aplicativos basicos" apt install -y "${BASIC_PACKAGES[@]}" || return 1
+	divider
+}
+
+banner_blue3() {
+	backup_file /etc/motd
+	backup_file /etc/update-motd.d/10-uname
+	backup_file /etc/update-motd.d/20-blue3
+
+	: > /etc/motd
+
+	copy_template "banner/10-uname.tpl" /etc/update-motd.d/10-uname || return 1
+	copy_template "banner/20-blue3.tpl" /etc/update-motd.d/20-blue3 || return 1
+
+	chmod 755 /etc/update-motd.d/10-uname /etc/update-motd.d/20-blue3
+	info "Banner BLUE3 aplicado. Backups salvos em $BACKUP_DIR"
+	divider
+}
+
+config_ssh() {
+	local ssh_port
+	local login_grace
+	local allowed_ips
+
+	backup_file /etc/ssh/sshd_config.d/blue3-hardening.conf
+	backup_file /etc/ssh/sshd_config.d/blue3-root-ipath.conf
+	backup_file /etc/ssh/sshd_config.d/rhosts.conf
+
+	mkdir -p /etc/ssh/sshd_config.d
+
+	ssh_port="$(prompt_default "Qual a porta do SSH?" "$DEFAULT_SSH_PORT")"
+	login_grace="$(prompt_default "Qual o tempo para digitar a senha (segundos)?" "$DEFAULT_LOGIN_GRACE")"
+	allowed_ips="$(prompt_default "Quais IPs autorizados a logar como root (separados por virgula)?" "$DEFAULT_ROOT_IPS")"
+
+	render_template "ssh/blue3-hardening.conf.tpl" /etc/ssh/sshd_config.d/blue3-hardening.conf \
+		SSH_PORT "$ssh_port" \
+		LOGIN_GRACE "$login_grace" || return 1
+
+	render_template "ssh/blue3-root-ipath.conf.tpl" /etc/ssh/sshd_config.d/blue3-root-ipath.conf \
+		ALLOWED_ROOT_IPS "$allowed_ips" || return 1
+
+	copy_template "ssh/rhosts.conf.tpl" /etc/ssh/sshd_config.d/rhosts.conf || return 1
+
+	if ! validate_ssh_config; then
+		warn "Configuracao SSH invalida. Restaurando arquivos anteriores."
+		restore_backup /etc/ssh/sshd_config.d/blue3-hardening.conf || rm -f /etc/ssh/sshd_config.d/blue3-hardening.conf
+		restore_backup /etc/ssh/sshd_config.d/blue3-root-ipath.conf || rm -f /etc/ssh/sshd_config.d/blue3-root-ipath.conf
+		restore_backup /etc/ssh/sshd_config.d/rhosts.conf || rm -f /etc/ssh/sshd_config.d/rhosts.conf
+		return 1
+	fi
+
+	run_step "Reiniciando servico SSH" systemctl restart ssh || return 1
+	info "SSH configurado com validacao previa em sshd -t"
+	divider
+}
+
+install_bashrc() {
+	backup_file /root/.bashrc
+
+	copy_template "bash/root.bashrc.tpl" /root/.bashrc || return 1
+
+	info ".bashrc do root atualizado. Backup salvo em $BACKUP_DIR"
+	divider
+}
+
+install_zabbix() {
+	local hostname_short
+	local zabbix_server
+	local zabbix_tmp_deb
+
+	ensure_internet || return 1
+	export DEBIAN_FRONTEND=noninteractive
+
+	run_step "Removendo Zabbix Agent antigo" apt purge -y zabbix-agent zabbix-agent2 || true
+	run_step "Limpando dependencias obsoletas" apt autoremove -y || return 1
+	run_step "Atualizando indices do APT" apt update || return 1
+
+	if apt-cache show zabbix-agent >> "$LOG_FILE" 2>&1; then
+		run_step "Instalando Zabbix Agent pelos repositorios atuais" apt install -y zabbix-agent || return 1
 	else
-		sed -i "s/#Port 22/Port ${choice}/g" /etc/ssh/sshd_config
-		echo 
+		if [[ -z "$ZABBIX_RELEASE_URL" ]]; then
+			error "Pacote zabbix-agent indisponivel nos repositorios atuais e ZABBIX_RELEASE_URL nao foi definido."
+			return 1
+		fi
+
+		zabbix_tmp_deb="/root/zabbix-release_${RUN_ID}.deb"
+		run_step "Baixando repositorio do Zabbix" wget -O "$zabbix_tmp_deb" "$ZABBIX_RELEASE_URL" || return 1
+		run_step "Instalando repositorio do Zabbix" dpkg -i "$zabbix_tmp_deb" || return 1
+		run_step "Atualizando indices do APT apos repositorio Zabbix" apt update || return 1
+		run_step "Instalando Zabbix Agent" apt install -y zabbix-agent || return 1
 	fi
 
-	TPASSDEF=30
-	read -p "Qual o tempo para digitar a senha (segundos) (${TPASSDEF})? " choice
-	if [ -z $choice ]; then
-		sed -i "s/#LoginGraceTime 2m/LoginGraceTime ${TPASSDEF}/g" /etc/ssh/sshd_config
-		echo 
-	else
-		sed -i "s/#LoginGraceTime 2m/LoginGraceTime ${choice}/g" /etc/ssh/sshd_config
-		echo 
-	fi
+	hostname_short="$(hostname -s)"
+	zabbix_server="$(prompt_default "Qual o IP do servidor Zabbix?" "$DEFAULT_ZABBIX_SERVER")"
 
-
-
-	sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin no/g" /etc/ssh/sshd_config
-	sed -i "/^#ListenAddress ::/a Protocol 2" /etc/ssh/sshd_config
-	sed -i "s/#SyslogFacility AUTH/SyslogFacility AUTH/g" /etc/ssh/sshd_config
-	sed -i "s/#LogLevel INFO/LogLevel INFO/g" /etc/ssh/sshd_config
-	sed -i "s/#PrintLastLog yes/PrintLastLog no/g" /etc/ssh/sshd_config
-	sed -i "s/#StrictModes yes/StrictModes yes/g" /etc/ssh/sshd_config
-	sed -i "s/#PermitEmptyPasswords no/PermitEmptyPasswords no/g" /etc/ssh/sshd_config
-	sed -i "s/#X11DisplayOffset 10/X11DisplayOffset 10/g" /etc/ssh/sshd_config
-	sed -i "s/#PrintMotd no/PrintMotd no/g" /etc/ssh/sshd_config
-	sed -i "s/#TCPKeepAlive yes/TCPKeepAlive yes/g" /etc/ssh/sshd_config
-
-	mkdir -p /etc/ssh/sshd_config.d/
-	echo "#Privilege Separation is turned on for security" > /etc/ssh/sshd_config.d/useprivilegeseparation.conf
-	echo "UsePrivilegeSeparation yes" >> /etc/ssh/sshd_config.d/useprivilegeseparation.conf
-
-	echo "# Lifetime and size of ephemeral version 1 server key" > /etc/ssh/sshd_config.d/keyregeneration.conf
-	echo "KeyRegenerationInterval 3600" >> /etc/ssh/sshd_config.d/keyregeneration.conf
-	echo "ServerKeyBits 1024" >> /etc/ssh/sshd_config.d/keyregeneration.conf
-
-	
-	IPAUTHDEF="100.64.66.0/24,170.233.230.254,170.233.230.222"
-	read -p "Quais IPs autorizados a logar como root, separados por , (${IPAUTHDEF})? " choice
-	if [ -z $choice ]; then
-		IPAUTH=$IPAUTHDEF
-	else
-		IPAUTH=$choice
-	fi
-	echo "# IPs autorizados a logar como root!" > /etc/ssh/sshd_config.d/ipath.conf
-	echo "Match Address ${IPAUTH}" >> /etc/ssh/sshd_config.d/ipath.conf
-	echo "	PermitRootLogin yes" >> /etc/ssh/sshd_config.d/ipath.conf
-	
-
-cat <<\EOF >/etc/ssh/sshd_config.d/rhosts.conf
-IgnoreRhosts yes
-# For this to work you will also need host keys in /etc/ssh_known_hosts
-RhostsRSAAuthentication no
-# similar for protocol version 2
-HostbasedAuthentication no
-RSAAuthentication yes
-PubkeyAuthentication yes
+	backup_file /etc/zabbix/zabbix_agentd.d/blue3.conf
+	mkdir -p /etc/zabbix/zabbix_agentd.d
+	cat > /etc/zabbix/zabbix_agentd.d/blue3.conf <<EOF
+Server=${zabbix_server}
+ServerActive=${zabbix_server}
+Hostname=${hostname_short}
 EOF
 
-
-echo ;echo ;echo -n " >> Reiniciando servico SSH................................................."
-systemctl restart ssh
-echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ;echo ;echo 
-
-	echo -n " >> Aplicando Mod SSH......................................................."
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ; echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
-}
-
-
-
-
-
-
-#
-# INSTALL BASHRC
-#
-install_bashrc (){
-	echo; echo ;echo -n " >> Aplicando banne BLUE3..................................................."
-mv /root/.bashrc $DIR/bashrc_
-touch /root/.bashrc
-
-cat <<\EOF >/root/.bashrc
-#
-# CRIADO POR: SAMIR HANNA VERZA
-# CRIADO EM: 20/05/2019
-# ATUALIZADO: 20/05/2019
-#
-#
-#
-#OLD
-# export PS1='\[\033[1;37m\]\t ${debian_chroot:+($debian_chroot)}\[\033[01;33m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[1;33m\]# \[\033[37m\]'
-#NEW
-#PS1='${debian_chroot:+($debian_chroot)}\[\033[01;31m\]\u\[\033[01;34m\]@\[\033[01;33m\]\h\[\033[01;34m\][\[\033[00m\]\[\033[01;37m\]\w\[\033[01;34m\]]\[\033[01;31m\]\$\[\033[00m\] '
-# LAST
-PS1='\[\033[1;37m\]\t ${debian_chroot:+($debian_chroot)}\[\033[01;31m\]\u\[\033[01;34m\]@\[\033[01;33m\]\h\[\033[01;34m\][\[\033[00m\]\[\033[01;37m\]\w\[\033[01;34m\]]\[\033[01;33m\]\$\[\033[00m\] '
-
-# ?
-source /usr/share/doc/fzf/examples/key-bindings.bash
+	backup_file /etc/zabbix/zabbix_agentd.d/userparameter_fail2ban.conf
+	cat > /etc/zabbix/zabbix_agentd.d/userparameter_fail2ban.conf <<'EOF'
+UserParameter=fail2ban.status[*],fail2ban-client status '$1' | awk -F': ' '/Currently banned/ {print $2}'
+UserParameter=fail2ban.statustotal[*],fail2ban-client status '$1' | awk -F': ' '/Total banned/ {print $2}'
+UserParameter=fail2ban.discovery,fail2ban-client status | sed -e 's/^.*:\W\+//' -e 's/\(\([[:alnum:]]\|-\)\+\)/{"{#JAIL}":"\1"}/g' -e 's/.*/{"data":[\0]}/'
 EOF
 
-	echo "" >> /root/.bashrc
-	echo "alias l='ls -alFh --color=auto'" >> /root/.bashrc
-	echo "alias vi='vi -C -c \"set nocp\" -c \"syn on\"'" >> /root/.bashrc
-	echo "alias ..='cd ..'" >> /root/.bashrc
-	echo "alias ls='ls --color'" >> /root/.bashrc
-	echo "alias lh=\"ls -aFh -lS --color | grep -v '^d'\"" >> /root/.bashrc
+	if systemctl list-unit-files fail2ban.service >> "$LOG_FILE" 2>&1; then
+		getent group fail2ban > /dev/null 2>&1 || groupadd --system fail2ban >> "$LOG_FILE" 2>&1
+		usermod -a -G fail2ban zabbix >> "$LOG_FILE" 2>&1 || true
 
-	echo "" >> /root/,bashrc
-	echo "alias grep='grep --color'" >> /root/.bashrc
-	echo "alias ip='ip -c'" >> /root/.bashrc
-	echo "alias tail='grc tail'" >> /root/.bashrc
-	echo "alias ping='grc ping'" >> /root/.bashrc
-	echo "alias traceroute='grc traceroute'" >> /root/.bashrc
-	echo "alias ps='grc ps'" >> /root/.bashrc
-	echo "alias netstat='grc netstat'" >> /root/.bashrc
-	echo "alias dig='grc dig'" >> /root/.bashrc
-	echo "alias meuip='curl ifconfig.me; echo;'" >> /root/.bashrc
-	echo "alias mv='mv -v'" >> /root/.bashrc
-
-
-
-
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ; echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
-}
-
-
-
-
-
-#
-# INSTALL ZABBIX AGENT
-#
-install_zabbix(){
-	echo; echo ;echo -n " >> Instalando Zabbix Agent................................................."; echo ;echo 
-
-	apt purge zabbix-agent -y >> $LOG 2>&1
-	apt autoremove -y >> $LOG 2>&1
-
-	hostname=`hostname -s` >> $LOG 2>&1
-	ZBX_DEFAULT=100.64.66.8
-	read -p "Qual o IP do Zabbix (${ZBX_DEFAULT})? " choice
-	if [ -z $choice ]; then
-		ZABBIX_SERVER=$ZBX_DEFAULT
-	else
-		ZABBIX_SERVER=$choice
-	fi
-
-	#wget https://repo.zabbix.com/zabbix/6.3/debian/pool/main/z/zabbix-release/zabbix-release_6.3-3+debian11_all.deb -O /root/zabbix.deb >> $LOG 2>&1
-	wget https://repo.zabbix.com/zabbix/6.2/debian/pool/main/z/zabbix-release/zabbix-release_6.2-1%2Bdebian11_all.deb -O /root/zabbix.deb >> $LOG 2>&1
-	dpkg -i /root/zabbix.deb >> $LOG 2>&1
-	apt update >> $LOG 2>&1
-	apt install zabbix-agent -y >> $LOG 2>&1
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo
-
-	echo ;echo -n " >> Configurando Zabbix Agent..............................................."
-	sed -i "s/Server=127.0.0.1/Server=${ZABBIX_SERVER}/g" /etc/zabbix/zabbix_agentd.conf
-	sed -i "s/ServerActive=127.0.0.1/ServerActive=${ZABBIX_SERVER}/g" /etc/zabbix/zabbix_agentd.conf
-	sed -i "s/Hostname=Zabbix server/Hostname=${hostname}/g" /etc/zabbix/zabbix_agentd.conf
-
-# VERIFICAR SE FAIL2BAN JA INSTALADO
-cat <<\EOF >/etc/zabbix/zabbix_agentd.d/userparameter_fail2ban.conf
-UserParameter=fail2ban.status[*],fail2ban-client status '$1' | grep 'Currently banned:' | grep -E -o '[0-9]+'
-UserParameter=fail2ban.statustotal[*],fail2ban-client status '$1' | grep 'Total banned:' | grep -E -o '[0-9]+'
-UserParameter=fail2ban.discovery,fail2ban-client status | grep 'Jail list:' | sed -e 's/^.*:\W\+//' -e 's/\(\(\w\|-\)\+\)/{"{#JAIL}":"\1"}/g' -e 's/.*/{"data":[\0]}/'
-EOF
-	addgroup --group fail2ban  >> $LOG 2>&1
-	usermod -a -G fail2ban zabbix  >> $LOG 2>&1
-	chown root:fail2ban /var/run/fail2ban/fail2ban.sock >> $LOG 2>&1
-	chmod g+rwx /var/run/fail2ban/fail2ban.sock >> $LOG 2>&1
-	mkdir /var/lib/zabbix >> $LOG 2>&1
-	chown zabbix:zabbix /var/lib/zabbix >> $LOG 2>&1
-	mkdir /nonexistent >> $LOG 2>&1
-	chown zabbix:zabbix /nonexistent >> $LOG 2>&1
-	mkdir /etc/systemd/system/fail2ban.service.d >> $LOG 2>&1
-
-
-cat <<\EOF >/etc/systemd/system/fail2ban.service.d/override.conf
+		mkdir -p /etc/systemd/system/fail2ban.service.d
+		backup_file /etc/systemd/system/fail2ban.service.d/override.conf
+		cat > /etc/systemd/system/fail2ban.service.d/override.conf <<'EOF'
 [Service]
-ExecStartPost=/bin/sh -c "while ! [ -S /run/fail2ban/fail2ban.sock ]; do sleep 1; done"
+ExecStartPost=/bin/sh -c 'while [ ! -S /run/fail2ban/fail2ban.sock ]; do sleep 1; done'
 ExecStartPost=/bin/chgrp fail2ban /run/fail2ban/fail2ban.sock
-ExecStartPost=/bin/chmod g+w /run/fail2ban/fail2ban.sock
-Restart Zabbix Agent
+ExecStartPost=/bin/chmod g+rw /run/fail2ban/fail2ban.sock
 EOF
 
-	systemctl daemon-reload
-	systemctl restart zabbix-agent fail2ban
-	
-
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo ; echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#
-# SAINDO
-#
-out_here () {
-    clear
-    echo ;echo 
-    echo -n " >> Apgando arquivos temporarios............................................"
-	rm -rf $DIR
-    sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo
-    echo ;echo -e "${WHI}----------------------------------------------------------------------------------------------------${ENDCOLOR}"; echo ; echo ; echo ; echo 
-	exit
-}
-
-
-
-
-
-#
-# TESTANDO INTERNET
-#
-clear
-net(){
-	echo ;echo 
-	echo -n " >> Verificando acesso a internet..........................................."
-	ping -w1 www.google.com.br >/dev/null 2>&1
-	while [ $? != 0 ]; do
-		echo; echo -e "Sem acesso à internet! ${RED}[ERRO]${ENDCOLOR}"
-		exit 1
-	done
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo
-}
-#net
-
-#
-# VERIFICANDO SE O USUARIO EH ROOT
-#
-root (){
-	echo -n " >> Verificando Usuario [ROOT].............................................."
-	if [ $USER != root ]
-	  then
-	  echo "Você precisa estar logado como root! ${RED}[ERRO]${ENDCOLOR}"
-	  exit 1
+		run_step "Recarregando units do systemd" systemctl daemon-reload || return 1
+		run_step "Reiniciando fail2ban" systemctl restart fail2ban || return 1
+	else
+		warn "Fail2ban nao esta instalado. A integracao de socket com Zabbix foi ignorada."
 	fi
-	sleep 0.5; echo -e "${YEL} [ OK ] ${ENDCOLOR}"; echo; echo 
-	echo 
+
+	run_step "Reiniciando Zabbix Agent" systemctl restart zabbix-agent || return 1
+	divider
 }
-#root
 
+out_here() {
+	divider
+	info "Execucao finalizada."
+	info "Versao atual do projeto: $VERSION"
+	info "Log: $LOG_FILE"
+	info "Backups: $BACKUP_DIR"
+	exit 0
+}
 
+show_header() {
+	clear
+	cat <<EOF
 
-#
-# AQUI COMECA O MENU
-# TENDO INTERNET ABRE O MENU
-#
-# --------------------------------------------------------------------------------------------
-# Não alterar as linhas a baixo
-# --------------------------------------------------------------------------------------------
-#
-echo ; echo ; echo ;echo '
 #
 # OBS:
-# Script deve ser executado apenas Linux Debian 11 ou posterior!
+# Script deve ser executado apenas em Linux Debian ${REQUIRED_DEBIAN_MAJOR} ou posterior.
 # Metodo de banimento com Fail2Ban: route (blackhole)
 # Script by Samir Hanna Verza
-# Versão ${versao}
+# Versao ${VERSION}
+# Update repo: ${UPDATE_REPO_OWNER}/${UPDATE_REPO_NAME}:${UPDATE_REPO_BRANCH}
 #
-'
 
+EOF
+}
 
-numchoice=1
-while [ $numchoice != 0 ]; do
-    echo -e "\033[94m
-#
+run_menu_option() {
+	local status=0
+
+	"$@" || status=$?
+	if [[ "$status" -ne 0 ]]; then
+		warn "A etapa terminou com erro. Consulte $LOG_FILE"
+		divider
+	fi
+}
+
+main_menu() {
+	local numchoice
+
+	while true; do
+		show_header
+		echo -e "${BLU}
 # MENU
-#
-.................................................\033[39m\n"
-    echo -n "
-1. CONFIG SERVER
-2. Update e upgrade do sistem
-3. Instalando aplicativos basicos
-4. Configurando o banner de inicializacao
-5. Versao da Blue3 do .bashrc
-6. Configurando SSH
-Z. Instalando Zabbix Agent
-0. SAIR
+${ENDCOLOR}"
+		cat <<'EOF'
+1. Config server
+2. Update e upgrade do sistema
+3. Instalar aplicativos basicos
+4. Configurar banner de inicializacao
+5. Aplicar .bashrc BLUE3 para root
+6. Configurar SSH
+U. Verificar e aplicar atualizacao do projeto
+Z. Instalar Zabbix Agent
+0. Sair
+EOF
+		echo
+		read -r -p "Selecione a opcao desejada: " numchoice
 
-Selecione a opcao a ser instalada: "
-read numchoice
-	case $numchoice in
-		"1" ) config_server ;;
-		"4" ) banner_blue3 ;;
-		"5" ) install_bashrc ;;
-		"6" ) config_ssh ;;
-		"3" ) install_appbasic ;;
-		"2" ) install_update_upgrade ;;
-		"Z" | "z" ) install_zabbix ;;
-		"0" | "x" | "X" | "q" | "Q" | "exit" | "EXIT" | "Exit" | "quit" | "QUIT" | "Quit"  ) out_here ;;
-		* ) out_here ;;
-	esac
-done
-exit
+		case "$numchoice" in
+			1) run_menu_option config_server ;;
+			2) run_menu_option install_update_upgrade ;;
+			3) run_menu_option install_appbasic ;;
+			4) run_menu_option banner_blue3 ;;
+			5) run_menu_option install_bashrc ;;
+			6) run_menu_option config_ssh ;;
+			U|u) run_menu_option self_update_project ;;
+			Z|z) run_menu_option install_zabbix ;;
+			0|x|X|q|Q|exit|EXIT|Exit|quit|QUIT|Quit) out_here ;;
+			*) warn "Opcao invalida." ;;
+		esac
+
+		read -r -p "Pressione Enter para voltar ao menu..." _
+	done
+}
+
+trap 'error "Falha inesperada na linha ${BASH_LINENO[0]}. Consulte $LOG_FILE"' ERR
+
+require_root
+load_local_version
+load_env_file
+require_debian
+require_commands apt awk cp cut date find getent grep head hostname hostnamectl ip mkdir mktemp mv ping sed sshd systemctl tar tee tr wget
+require_files \
+	"$VERSION_FILE" \
+	"$TEMPLATE_DIR/banner/10-uname.tpl" \
+	"$TEMPLATE_DIR/banner/20-blue3.tpl" \
+	"$TEMPLATE_DIR/bash/root.bashrc.tpl" \
+	"$TEMPLATE_DIR/ssh/blue3-hardening.conf.tpl" \
+	"$TEMPLATE_DIR/ssh/blue3-root-ipath.conf.tpl" \
+	"$TEMPLATE_DIR/ssh/rhosts.conf.tpl"
+init_environment
+main_menu

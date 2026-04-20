@@ -1,0 +1,3 @@
+IgnoreRhosts yes
+HostbasedAuthentication no
+PubkeyAuthentication yes
