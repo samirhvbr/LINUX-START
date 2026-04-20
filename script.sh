@@ -24,8 +24,8 @@ ENDCOLOR="\e[0m"
 # ==========================
 RUN_ID="$(date +%Y%m%d%H%M%S)"
 DATE_STAMP="$(date +%Y%m%d)"
-LOG_FILE="/root/blue3_start_${RUN_ID}.log"
-BACKUP_DIR="/root/blue3_start_${RUN_ID}"
+LOG_FILE="/tmp/blue3_start_${RUN_ID}.log"
+BACKUP_DIR="/tmp/blue3_start_${RUN_ID}"
 
 # ==========================
 # VARIAVEIS DE AJUSTE RAPIDO
@@ -742,7 +742,7 @@ show_header() {
 # Metodo de banimento com Fail2Ban: route (blackhole)
 # Script by Samir Hanna Verza
 # Versao ${VERSION}
-# Update repo: ${UPDATE_REPO_OWNER}/${UPDATE_REPO_NAME}:${UPDATE_REPO_BRANCH}
+# Update repo: https://github.com/${UPDATE_REPO_OWNER}/${UPDATE_REPO_NAME}:${UPDATE_REPO_BRANCH}
 #
 
 EOF
