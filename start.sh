@@ -2,11 +2,11 @@
 
 set -Eeuo pipefail
 
-VERSION="23.1"
+VERSION="23.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
-ENV_FILE="${BLUE3_ENV_FILE:-$SCRIPT_DIR/.env}"
+ENV_FILE="${BLUE3_ENV_FILE:-$SCRIPT_DIR/.env_start}"
 VERSION_FILE="$SCRIPT_DIR/VERSION"
 
 # ==========================
@@ -36,15 +36,22 @@ DEFAULT_SSH_PORT="${DEFAULT_SSH_PORT:-22}"
 DEFAULT_LOGIN_GRACE="${DEFAULT_LOGIN_GRACE:-30}"
 DEFAULT_ROOT_IPS="${DEFAULT_ROOT_IPS:-100.64.66.0/24,170.233.230.254,170.233.230.222}"
 DEFAULT_ZABBIX_SERVER="${DEFAULT_ZABBIX_SERVER:-100.64.66.8}"
+DEFAULT_NTP_SERVER="${DEFAULT_NTP_SERVER:-ntp.blue3.com.br}"
+DEFAULT_APT_MIRROR="${DEFAULT_APT_MIRROR:-http://mirror.blue3.com.br/debian}"
+DEFAULT_APT_SECURITY_MIRROR="${DEFAULT_APT_SECURITY_MIRROR:-http://security.debian.org/debian-security}"
+DEFAULT_APT_SUITE="${DEFAULT_APT_SUITE:-trixie}"
 ZABBIX_RELEASE_URL="${ZABBIX_RELEASE_URL:-}"
 UPDATE_REPO_OWNER="${UPDATE_REPO_OWNER:-samirhvbr}"
 UPDATE_REPO_NAME="${UPDATE_REPO_NAME:-Linux-Start}"
 UPDATE_REPO_BRANCH="${UPDATE_REPO_BRANCH:-master}"
 
 BASIC_PACKAGES=(
+	iptables
+	wget
+	apt-transport-https
+	git
 	zip
 	fail2ban
-	iptables
 	w3m
 	unzip
 	net-tools
@@ -157,9 +164,9 @@ load_env_file() {
 		set -a
 		source "$ENV_FILE"
 		set +a
-		info "Arquivo .env carregado: $ENV_FILE"
+		info "Arquivo de ambiente carregado: $ENV_FILE"
 	else
-		info "Arquivo .env nao encontrado. Usando valores padrao internos."
+		info "Arquivo de ambiente nao encontrado em $ENV_FILE. Usando valores padrao internos."
 	fi
 }
 
@@ -723,6 +730,77 @@ EOF
 	divider
 }
 
+install_ntp_clock_sync() {
+	local ntp_server
+
+	ensure_internet || return 1
+	export DEBIAN_FRONTEND=noninteractive
+
+	ntp_server="$(prompt_default "Qual o servidor NTP principal?" "$DEFAULT_NTP_SERVER")"
+
+	run_step "Atualizando indices do APT" apt update || return 1
+	run_step "Instalando Chrony" apt install -y chrony || return 1
+
+	if systemctl list-unit-files systemd-timesyncd.service >> "$LOG_FILE" 2>&1; then
+		run_step "Desabilitando systemd-timesyncd" systemctl disable --now systemd-timesyncd || return 1
+	fi
+
+	backup_file /etc/chrony/chrony.conf
+	cat > /etc/chrony/chrony.conf <<EOF
+# Arquivo gerenciado por ${SCRIPT_NAME}
+server ${ntp_server} iburst prefer
+pool 0.debian.pool.ntp.org iburst
+pool 1.debian.pool.ntp.org iburst
+
+driftfile /var/lib/chrony/chrony.drift
+ntsdumpdir /var/lib/chrony
+logdir /var/log/chrony
+maxupdateskew 100.0
+rtcsync
+makestep 1 3
+leapsectz right/UTC
+EOF
+
+	run_step "Habilitando Chrony" systemctl enable chrony || return 1
+	run_step "Reiniciando Chrony" systemctl restart chrony || return 1
+
+	if command -v chronyc > /dev/null 2>&1; then
+		run_step "Consultando fontes NTP do Chrony" chronyc -n sources || return 1
+	fi
+
+	info "Sincronismo NTP configurado com servidor principal ${ntp_server}"
+	divider
+}
+
+update_mirror_sources() {
+	local debian_sources_file="/etc/apt/sources.list.d/debian.sources"
+
+	ensure_internet || return 1
+
+	backup_file /etc/apt/sources.list
+	cat > /etc/apt/sources.list <<EOF
+deb ${DEFAULT_APT_MIRROR} ${DEFAULT_APT_SUITE} main contrib non-free non-free-firmware
+deb-src ${DEFAULT_APT_MIRROR} ${DEFAULT_APT_SUITE} main contrib non-free non-free-firmware
+
+deb ${DEFAULT_APT_SECURITY_MIRROR} ${DEFAULT_APT_SUITE}-security main contrib non-free non-free-firmware
+deb-src ${DEFAULT_APT_SECURITY_MIRROR} ${DEFAULT_APT_SUITE}-security main contrib non-free non-free-firmware
+
+# ${DEFAULT_APT_SUITE}-updates, to get updates before a point release is made;
+# see https://www.debian.org/doc/manuals/debian-reference/ch02.en.html#_updates_and_backports
+deb ${DEFAULT_APT_MIRROR} ${DEFAULT_APT_SUITE}-updates main contrib non-free non-free-firmware
+deb-src ${DEFAULT_APT_MIRROR} ${DEFAULT_APT_SUITE}-updates main contrib non-free non-free-firmware
+EOF
+
+	if [[ -f "$debian_sources_file" ]]; then
+		backup_file "$debian_sources_file"
+		run_step "Desabilitando arquivo debian.sources padrao" mv -f "$debian_sources_file" "${debian_sources_file}.disabled-by-blue3" || return 1
+	fi
+
+	run_step "Atualizando indices do APT com o novo mirror" apt update || return 1
+	info "Mirror APT configurado para ${DEFAULT_APT_MIRROR} com suite ${DEFAULT_APT_SUITE}"
+	divider
+}
+
 out_here() {
 	divider
 	info "Execucao finalizada."
@@ -773,6 +851,8 @@ ${ENDCOLOR}"
 4. Configurar banner de inicializacao
 5. Aplicar .bashrc BLUE3 para root
 6. Configurar SSH
+7. Instalar e configurar sincronismo NTP
+8. Atualizar mirror sources do APT
 U. Verificar e aplicar atualizacao do projeto
 Z. Instalar Zabbix Agent
 0. Sair
@@ -787,6 +867,8 @@ EOF
 			4) run_menu_option banner_blue3 ;;
 			5) run_menu_option install_bashrc ;;
 			6) run_menu_option config_ssh ;;
+			7) run_menu_option install_ntp_clock_sync ;;
+			8) run_menu_option update_mirror_sources ;;
 			U|u) run_menu_option self_update_project ;;
 			Z|z) run_menu_option install_zabbix ;;
 			0|x|X|q|Q|exit|EXIT|Exit|quit|QUIT|Quit) out_here ;;

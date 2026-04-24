@@ -6,10 +6,10 @@ O objetivo deste projeto e padronizar as primeiras configuracoes de um servidor 
 
 ## Arquivos
 
-- `script.sh`: script principal de configuracao inicial
+- `start.sh`: script principal de configuracao inicial
 - `README.md`: documentacao de uso e manutencao
 - `VERSION`: versao local do projeto
-- `.env.example`: exemplo de configuracao local
+- `.env.example`: modelo de configuracao local para gerar `.env_start`
 - `templates/`: blocos externos usados pelo script
 
 ## O que o script faz
@@ -40,7 +40,7 @@ O script foi reorganizado para corrigir problemas do modelo anterior:
 - reescreve configuracoes criticas com heredoc legivel
 - deixa variaveis sensiveis concentradas no topo do script
 - move blocos grandes para templates externos
-- suporta arquivo `.env` local para customizacao do ambiente
+- suporta arquivo `.env_start` local para customizacao do ambiente
 - usa arquivo `VERSION` para controle de versao local
 - prepara autoatualizacao do projeto via GitHub por tarball do repositorio
 
@@ -52,7 +52,7 @@ O projeto agora possui um arquivo dedicado:
 VERSION
 ```
 
-Esse arquivo e a fonte da versao local do projeto. O `script.sh` le esse valor na inicializacao e compara com a versao publicada no GitHub quando a rotina de autoatualizacao e executada.
+Esse arquivo e a fonte da versao local do projeto. O `start.sh` le esse valor na inicializacao e compara com a versao publicada no GitHub quando a rotina de autoatualizacao e executada.
 
 Esse modelo e melhor do que deixar a versao apenas dentro do script porque:
 
@@ -62,7 +62,7 @@ Esse modelo e melhor do que deixar a versao apenas dentro do script porque:
 
 ## Autoatualizacao via GitHub
 
-O script agora suporta autoatualizacao do projeto usando o repositorio GitHub configurado no `.env`.
+O script agora suporta autoatualizacao do projeto usando o repositorio GitHub configurado no `.env_start`.
 
 Variaveis novas:
 
@@ -90,7 +90,7 @@ Foi verificado o repositorio:
 
 - `https://github.com/samirhvbr/Linux-Start`
 
-No momento da checagem, o branch `master` ainda estava com a versao antiga do `script.sh` e sem `VERSION` publicado. Entao:
+No momento da checagem, o branch `master` ainda estava com a versao antiga do `start.sh` e sem `VERSION` publicado. Entao:
 
 - o mecanismo novo ja esta pronto localmente
 - ele passa a funcionar de verdade assim que esta nova estrutura for enviada ao GitHub
@@ -108,16 +108,16 @@ Os blocos maiores de manutencao foram separados em arquivos dentro de `templates
 - `templates/ssh/blue3-root-ipath.conf.tpl`
 - `templates/ssh/rhosts.conf.tpl`
 
-Com isso, alteracoes de banner, bashrc e SSH nao precisam mais ser feitas diretamente no corpo do `script.sh`.
+Com isso, alteracoes de banner, bashrc e SSH nao precisam mais ser feitas diretamente no corpo do `start.sh`.
 
-## Uso de .env
+## Uso de .env_start
 
-Sim, usar `.env` aqui faz sentido como boa pratica, desde que ele seja tratado como configuracao local e nao como arquivo versionado com dados sensiveis.
+Sim, usar um arquivo de ambiente aqui faz sentido como boa pratica, desde que ele seja tratado como configuracao local e nao como arquivo versionado com dados sensiveis.
 
 O script procura automaticamente por:
 
 ```bash
-.env
+.env_start
 ```
 
 no mesmo diretorio do projeto. Se o arquivo nao existir, ele usa os valores padrao embutidos no script.
@@ -125,14 +125,14 @@ no mesmo diretorio do projeto. Se o arquivo nao existir, ele usa os valores padr
 O fluxo recomendado e:
 
 ```bash
-cp .env.example .env
+cp .env.example .env_start
 ```
 
 Depois disso, ajuste os valores do seu ambiente local.
 
 ## Variaveis de ajuste rapido
 
-Estas variaveis podem ficar no `.env` para facilitar a adaptacao para outros ambientes:
+Estas variaveis podem ficar no `.env_start` para facilitar a adaptacao para outros ambientes:
 
 ```bash
 REQUIRED_DEBIAN_MAJOR="${REQUIRED_DEBIAN_MAJOR:-11}"
@@ -174,23 +174,30 @@ apt awk cp cut date getent grep hostname hostnamectl ip mkdir mv ping sed sshd s
 
 ## Como usar
 
-Entre na pasta do projeto e execute como root:
+Para baixar o projeto direto no servidor via Git:
 
 ```bash
-cd /home/samir/Webs/b3files/www/files.b3.rs/blue3/blue3_start_script
-bash script.sh
+apt update && apt install -y git
+git clone -b master https://github.com/samirhvbr/Linux-Start.git
+cd Linux-Start
+```
+
+Depois, execute como root:
+
+```bash
+bash start.sh
 ```
 
 Tambem e possivel sobrescrever variaveis no momento da chamada:
 
 ```bash
-DEFAULT_SSH_PORT=2222 DEFAULT_DOMAIN=empresa.local bash script.sh
+DEFAULT_SSH_PORT=2222 DEFAULT_DOMAIN=empresa.local bash start.sh
 ```
 
 Se preferir um arquivo dedicado em outro caminho, tambem e possivel usar:
 
 ```bash
-BLUE3_ENV_FILE=/caminho/arquivo.env bash script.sh
+BLUE3_ENV_FILE=/caminho/arquivo.env_start bash start.sh
 ```
 
 ## Comportamento das funcoes principais
@@ -236,8 +243,8 @@ BLUE3_ENV_FILE=/caminho/arquivo.env bash script.sh
 ## Observacoes importantes
 
 - o script e interativo; nao foi convertido para modo totalmente nao interativo
-- o `.env` e recomendado para defaults locais, mas nao substitui a revisao manual de rede e SSH
-- a autoatualizacao depende de o repositorio remoto conter `VERSION`, `script.sh` e a pasta `templates/`
+- o `.env_start` e recomendado para defaults locais, mas nao substitui a revisao manual de rede e SSH
+- a autoatualizacao depende de o repositorio remoto conter `VERSION`, `start.sh` e a pasta `templates/`
 - a etapa de rede pode derrubar acesso remoto se aplicada sem revisao
 - a etapa de SSH altera politica de acesso root e porta; deve ser testada com cuidado
 - o script assume uso de `ifupdown` em `/etc/network/interfaces`
@@ -247,7 +254,7 @@ BLUE3_ENV_FILE=/caminho/arquivo.env bash script.sh
 
 Melhorias naturais para fases futuras:
 
-1. criar modo nao interativo por variaveis ou arquivo `.env`
+1. criar modo nao interativo por variaveis ou arquivo `.env_start`
 2. separar blocos grandes em arquivos de template
 3. adicionar validacao de IP, CIDR e porta antes de escrever configuracoes
 4. incluir testes de sintaxe automatizados no projeto
