@@ -70,6 +70,21 @@ BASIC_PACKAGES=(
 	python3
 )
 
+PROXMOX_VM_PACKAGES=(
+	qemu-guest-agent
+	curl
+	wget
+	nano
+	htop
+	rsync
+	net-tools
+)
+
+PROXMOX_CLOUD_INIT_PACKAGES=(
+	cloud-init
+	cloud-initramfs-growroot
+)
+
 log_raw() {
 	printf '%s\n' "$*" >> "$LOG_FILE"
 }
@@ -601,6 +616,127 @@ install_appbasic() {
 	divider
 }
 
+schedule_ssh_host_keys_regeneration_on_boot() {
+	local helper_script="/usr/local/sbin/blue3-regenerate-ssh-host-keys-once.sh"
+	local service_file="/etc/systemd/system/blue3-regenerate-ssh-host-keys.service"
+
+	backup_file "$helper_script"
+	backup_file "$service_file"
+
+	mkdir -p /usr/local/sbin
+	cat > "$helper_script" <<'EOF'
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+if command -v ssh-keygen > /dev/null 2>&1; then
+	ssh-keygen -A
+else
+	echo "ssh-keygen nao encontrado para regenerar host keys SSH" >&2
+	exit 1
+fi
+
+systemctl disable --now blue3-regenerate-ssh-host-keys.service
+rm -f /etc/systemd/system/blue3-regenerate-ssh-host-keys.service
+systemctl daemon-reload
+rm -f -- "$0"
+EOF
+	chmod 700 "$helper_script"
+
+	cat > "$service_file" <<EOF
+[Unit]
+Description=BLUE3 - regenera host keys SSH uma vez no boot
+After=local-fs.target systemd-remount-fs.service
+Before=ssh.service
+ConditionPathExists=${helper_script}
+
+[Service]
+Type=oneshot
+ExecStart=${helper_script}
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+	run_step "Recarregando units do systemd" systemctl daemon-reload || return 1
+	run_step "Habilitando regeneracao de host keys no proximo boot" systemctl enable blue3-regenerate-ssh-host-keys.service || return 1
+	info "Regeneracao de host keys SSH agendada para o proximo boot. O servico se remove sozinho apos executar."
+	divider
+}
+
+install_proxmox_vm_profile() {
+	ensure_internet || return 1
+	export DEBIAN_FRONTEND=noninteractive
+
+	run_step "Atualizando indices do APT" apt update || return 1
+	run_step "Instalando pacotes para VM Proxmox" apt install -y "${PROXMOX_VM_PACKAGES[@]}" || return 1
+	run_step "Habilitando QEMU Guest Agent" systemctl enable --now qemu-guest-agent || return 1
+
+	if confirm "Deseja instalar Cloud-Init para templates e clones?" "S"; then
+		run_step "Instalando Cloud-Init" apt install -y "${PROXMOX_CLOUD_INIT_PACKAGES[@]}" || return 1
+	fi
+
+	if systemctl list-unit-files fstrim.timer >> "$LOG_FILE" 2>&1; then
+		run_step "Habilitando TRIM automatico" systemctl enable --now fstrim.timer || return 1
+	else
+		warn "Timer fstrim.timer nao encontrado. TRIM automatico foi ignorado."
+	fi
+
+	mkdir -p /root/.ssh
+	chmod 700 /root/.ssh
+	info "Diretorio /root/.ssh garantido para uso futuro com chaves."
+
+	if confirm "Deseja executar limpeza de cache e logs rotacionados agora?" "S"; then
+		run_step "Removendo pacotes obsoletos" apt autoremove -y || return 1
+		run_step "Limpando cache do APT" apt clean || return 1
+		run_step "Limpando journals antigos" journalctl --vacuum-time=2weeks || return 1
+		run_step "Removendo logs rotacionados" find /var/log -maxdepth 1 -type f \( -name '*.gz' -o -regextype posix-extended -regex '.*/[^/]+\.[0-9]+' \) -delete || return 1
+	fi
+
+	if confirm "Deseja preparar esta VM para template ou clonagem agora?" "N"; then
+		backup_file /etc/machine-id
+		run_step "Limpando machine-id" truncate -s 0 /etc/machine-id || return 1
+
+		if [[ -e /var/lib/dbus/machine-id ]]; then
+			backup_file /var/lib/dbus/machine-id
+			run_step "Limpando machine-id do D-Bus" truncate -s 0 /var/lib/dbus/machine-id || return 1
+		fi
+
+		if confirm "Deseja remover tambem as chaves host SSH para o template recria-las no proximo boot?" "N"; then
+			find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print0 | while IFS= read -r -d '' ssh_host_key; do
+				backup_file "$ssh_host_key"
+			done
+			run_step "Removendo chaves host SSH" find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -delete || return 1
+
+			if confirm "Deseja agendar a regeneracao automatica das host keys no proximo boot?" "S"; then
+				schedule_ssh_host_keys_regeneration_on_boot || return 1
+			else
+				warn "Chaves host SSH removidas sem agendamento automatico. Garanta a regeneracao manual antes de expor o clone."
+			fi
+		fi
+
+		if command -v cloud-init > /dev/null 2>&1; then
+			run_step "Limpando estado do Cloud-Init" cloud-init clean --logs || return 1
+		fi
+
+		warn "Machine-id limpo. Se esta VM virar template, desligue-a antes de clonar."
+	fi
+
+	info "Perfil de VM Proxmox aplicado. Em templates com Cloud-Init, revise tambem a estrategia de rede antes de clonar."
+	divider
+}
+
+schedule_ssh_host_keys_regeneration_menu() {
+	if ! confirm "Deseja agendar a regeneracao das host keys SSH no proximo boot?" "S"; then
+		warn "Agendamento cancelado pelo operador."
+		divider
+		return 0
+	fi
+
+	schedule_ssh_host_keys_regeneration_on_boot || return 1
+}
+
 banner_blue3() {
 	backup_file /etc/motd
 	backup_file /etc/update-motd.d/10-uname
@@ -848,11 +984,13 @@ ${ENDCOLOR}"
 1. Config server
 2. Update e upgrade do sistema
 3. Instalar aplicativos basicos
-4. Configurar banner de inicializacao
-5. Aplicar .bashrc BLUE3 para root
-6. Configurar SSH
-7. Instalar e configurar sincronismo NTP
-8. Atualizar mirror sources do APT
+4. Aplicar perfil de VM Proxmox
+5. Configurar banner de inicializacao
+6. Aplicar .bashrc BLUE3 para root
+7. Configurar SSH
+8. Instalar e configurar sincronismo NTP
+9. Atualizar mirror sources do APT
+A. Agendar regeneracao de host keys SSH no proximo boot
 U. Verificar e aplicar atualizacao do projeto
 Z. Instalar Zabbix Agent
 0. Sair
@@ -864,11 +1002,13 @@ EOF
 			1) run_menu_option config_server ;;
 			2) run_menu_option install_update_upgrade ;;
 			3) run_menu_option install_appbasic ;;
-			4) run_menu_option banner_blue3 ;;
-			5) run_menu_option install_bashrc ;;
-			6) run_menu_option config_ssh ;;
-			7) run_menu_option install_ntp_clock_sync ;;
-			8) run_menu_option update_mirror_sources ;;
+			4) run_menu_option install_proxmox_vm_profile ;;
+			5) run_menu_option banner_blue3 ;;
+			6) run_menu_option install_bashrc ;;
+			7) run_menu_option config_ssh ;;
+			8) run_menu_option install_ntp_clock_sync ;;
+			9) run_menu_option update_mirror_sources ;;
+			A|a) run_menu_option schedule_ssh_host_keys_regeneration_menu ;;
 			U|u) run_menu_option self_update_project ;;
 			Z|z) run_menu_option install_zabbix ;;
 			0|x|X|q|Q|exit|EXIT|Exit|quit|QUIT|Quit) out_here ;;

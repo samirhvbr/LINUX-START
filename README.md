@@ -19,11 +19,15 @@ O menu atual oferece estas etapas:
 1. Configurar hostname, `/etc/hosts` e arquivo de rede
 2. Executar `apt update`, `upgrade`, `clean` e `autoremove`
 3. Instalar aplicativos basicos de administracao
-4. Aplicar banner BLUE3 no login
-5. Aplicar `.bashrc` BLUE3 para o usuario root
-6. Configurar SSH via `sshd_config.d`
-7. Verificar e aplicar autoatualizacao do projeto via GitHub
-8. Instalar e configurar Zabbix Agent
+4. Aplicar perfil de VM Proxmox
+5. Aplicar banner BLUE3 no login
+6. Aplicar `.bashrc` BLUE3 para o usuario root
+7. Configurar SSH via `sshd_config.d`
+8. Instalar e configurar sincronismo NTP
+9. Atualizar mirror APT
+A. Agendar regeneracao das host keys SSH no proximo boot
+U. Verificar e aplicar autoatualizacao do projeto via GitHub
+Z. Instalar e configurar Zabbix Agent
 
 ## Melhorias aplicadas nesta versao
 
@@ -219,6 +223,25 @@ BLUE3_ENV_FILE=/caminho/arquivo.env_start bash start.sh
 - valida a configuracao com `sshd -t`
 - so reinicia o servico se a validacao passar
 
+### Perfil Proxmox VM
+
+- atualiza os indices do APT antes da instalacao
+- instala `qemu-guest-agent`, `rsync`, `nano`, `htop`, `curl`, `wget` e `net-tools`
+- habilita `qemu-guest-agent` imediatamente
+- oferece instalacao opcional de `cloud-init` e `cloud-initramfs-growroot`
+- habilita `fstrim.timer` quando disponivel
+- garante `/root/.ssh` com permissao `700`
+- oferece limpeza opcional de cache, journals antigos e logs rotacionados
+- oferece preparacao opcional para template/clone limpando `machine-id` e estado do `cloud-init`
+- dentro da preparacao para template, oferece remocao opcional das chaves host SSH e pode agendar a regeneracao automatica no proximo boot
+
+### Regeneracao de host keys SSH no proximo boot
+
+- cria um servico `systemd` `oneshot` para executar apenas uma vez no proximo boot
+- usa `ssh-keygen -A` para recriar apenas as host keys ausentes
+- remove o proprio script e a propria unit depois da execucao
+- e a opcao mais adequada quando a VM sera transformada em template ou quando o clone ainda nao iniciou com identidade definitiva
+
 ### Banner e bashrc
 
 - o banner BLUE3 e aplicado a partir dos templates em `templates/banner/`
@@ -246,6 +269,8 @@ BLUE3_ENV_FILE=/caminho/arquivo.env_start bash start.sh
 - o `.env_start` e recomendado para defaults locais, mas nao substitui a revisao manual de rede e SSH
 - a autoatualizacao depende de o repositorio remoto conter `VERSION`, `start.sh` e a pasta `templates/`
 - a etapa de rede pode derrubar acesso remoto se aplicada sem revisao
+- a etapa de perfil Proxmox pode limpar `machine-id` se o operador confirmar preparacao para template
+- a regeneracao agendada de host keys SSH so deve ser usada quando a identidade SSH atual puder ser descartada com seguranca
 - a etapa de SSH altera politica de acesso root e porta; deve ser testada com cuidado
 - o script assume uso de `ifupdown` em `/etc/network/interfaces`
 - para servidores com `cloud-init`, `NetworkManager` ou `systemd-networkd`, a etapa de rede deve ser revisada antes do uso
