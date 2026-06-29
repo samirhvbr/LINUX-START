@@ -4,6 +4,16 @@ Script inicial para provisionamento manual de servidores Debian.
 
 O objetivo deste projeto e padronizar as primeiras configuracoes de um servidor Linux Debian com menu interativo, mantendo log, backup e pontos de ajuste rapido no inicio do script.
 
+## 🔄 Antes de comecar: `git pull`
+
+**SEMPRE** verifique atualizacoes remotas antes de escrever ou alterar qualquer coisa neste repositorio:
+
+```bash
+git pull          # ja esta pre-autorizado (allow)
+```
+
+Trabalhar sobre uma base desatualizada gera conflitos. Puxe primeiro, sempre. Para so inspecionar antes: `git fetch && git status`.
+
 ## Arquivos
 
 - `start.sh`: script principal de configuracao inicial
